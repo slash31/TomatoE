@@ -1595,9 +1595,11 @@ TomatoGrid.prototype = {
 
 		c = r.insertCell(0);
 		c.colSpan = this.header.cells.length;
+		c.innerHTML = '';
 		if (which == 'edit') {
-			c.innerHTML =
-				'<input type=button value="Delete" onclick="TGO(this).onDelete()"> &nbsp; ' +
+			if (!this.disableEditorDelete) 
+				c.innerHTML = '<input type=button value="Delete" onclick="TGO(this).onDelete()"> &nbsp; ';
+			c.innerHTML = c.innerHTML + 
 				'<input type=button value="OK" onclick="TGO(this).onOK()"> ' +
 				'<input type=button value="Cancel" onclick="TGO(this).onCancel()">';
 		}
@@ -2369,6 +2371,9 @@ function navi()
 		['Tools', 			'tools', 0, [
 			['Ping',			'ping.asp'],
 			['Trace',			'trace.asp'],
+/* TCPDUMP-BEGIN */
+			['Tcpdump',			'tcpdump.asp'],
+/* TCPDUMP-END */
 			['System',			'shell.asp'],
 			['Wireless Survey',		'survey.asp'],
 			['WOL',				'wol.asp'] ] ],
@@ -2484,6 +2489,9 @@ REMOVE-END */
 /* SNMP-BEGIN */
 			['SNMP',			'snmp.asp'],
 /* SNMP-END */
+/* NETFLOW-BEGIN */
+			['NetFlow',			'netflow.asp'],
+/* NETFLOW-END */
 			['Logging',			'log.asp'],
 			['Scheduler',			'sched.asp'],
 			['Scripts',			'scripts.asp'],

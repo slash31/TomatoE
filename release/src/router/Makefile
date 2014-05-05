@@ -56,6 +56,9 @@ obj-$(TCONFIG_DNSCRYPT) += dnscrypt
 obj-$(TCONFIG_SNMP) += snmp
 obj-$(TCONFIG_SDHC) += mmc
 
+obj-y += libpcap
+obj-y += tcpdump
+
 # !!TB - updated Broadcom Wireless driver
 obj-y += et
 obj-y += libbcmcrypto
@@ -163,7 +166,9 @@ obj-$(TCONFIG_PPTP) += accel-pptp
 obj-$(TCONFIG_PPTPD) += pptpd
 obj-$(TCONFIG_HTTPS) += openssl
 obj-$(TCONFIG_SSH) += dropbear
-obj-$(TCONFIG_ZEBRA) += zebra
+obj-$(TCONFIG_QUAGGA) += quagga
+obj-$(TCONFIG_UCARP) += ucarp
+obj-$(TCONFIG_NETFLOW) += fprobe-ulog
 #	obj-$(TCONFIG_IPP2P) += ipp2p
 obj-$(TCONFIG_LZO) += lzo
 obj-$(TCONFIG_OPENVPN) += openvpn
@@ -627,7 +632,7 @@ menuconfig mconf: rmconf kmconf
 
 .ipv6-y .ipv6-n:
 	@rm -f .ipv6-y .ipv6-n
-	@$(MAKE) iptables-clean ebtables-clean pppd-clean zebra-clean dnsmasq-clean iproute2-clean
+	@$(MAKE) iptables-clean ebtables-clean pppd-clean quagga-clean fprobe-ulog-clean dnsmasq-clean iproute2-clean
 	@touch $@
 
 .fullssl-y .fullssl-n:
@@ -703,14 +708,14 @@ endif
 
 openssl/stamp-h1:
 	cd openssl && \
-	./Configure linux-mipsel --openssldir=/etc --cross-compile-prefix=' ' \
+	./Configure --openssldir=/etc --cross-compile-prefix=' ' \
 	-ffunction-sections -fdata-sections -Wl,--gc-sections \
 	shared $(OPENSSL_CIPHERS) \
 	no-sha0 no-smime no-camellia no-krb5 no-rmd160 no-ripemd \
 	no-seed no-capieng no-cms no-gms no-gmp no-rfc3779 \
 	no-ec no-ecdh no-ecdsa no-err no-hw no-jpake no-threads \
 	no-zlib no-engines no-sse2 \
-	no-dtls1 no-store no-psk no-md2 no-mdc2 no-ts
+	no-dtls1 no-store no-psk no-md2 no-mdc2 no-ts linux-generic32
 
 	@$(MAKE) -C openssl clean
 	@touch openssl/stamp-h1
@@ -1104,32 +1109,111 @@ endif
 #		install -D ipupdate/ez-ipupdate $(INSTALLDIR)/ipupdate/usr/sbin/ez-ipupdate
 #		$(STRIP) $(INSTALLDIR)/ipupdate/usr/sbin/ez-ipupdate
 
-zebra/stamp-h1:
-	@cd zebra && rm -f config.cache && \
+quagga/stamp-h1:
+	@cd quagga && rm -f config.cache && \
+	CC=$(CC) AR=$(AR) RANLIB=$(RANLIB) LD=$(LD) NETSNMP_CONFIG="$(TOP)/snmp" \
+	CFLAGS="-Os -Wall $(EXTRACFLAGS) -ffunction-sections -fdata-sections -I$(TOP)/snmp/include" \
+	LDFLAGS="-ffunction-sections -fdata-sections -Wl,--gc-sections -fPIC" \
+	LIBS="-L$(TOP)/snmp/snmplib/.libs -L$(TOP)/snmp/agent/.libs -L$(TOP)/snmp/agent/helpers/.libs -lnetsnmpagent -lnetsnmpmibs -lnetsnmphelpers -lnetsnmp" \
+	$(CONFIGURE) --sysconfdir=/etc \
+	--enable-netlink $(if $(TCONFIG_IPV6),--enable-ipv6,--disable-ipv6) --disable-doc \
+        --disable-ripngd --disable-rtadv --disable-bgpd --disable-bgpd-announce \
+	--enable-snmp=agentx --disable-shared --enable-static --enable-user=root --enable-group=root 
+	@touch quagga/stamp-h1
+
+quagga: quagga/stamp-h1
+	@$(MAKE) -C quagga CC=$(CC) AR=$(AR) RANLIB=$(RANLIB) LD=$(LD)
+
+quagga-clean:
+	-@$(MAKE) -C quagga clean
+	@rm -f quagga/stamp-h1
+
+quagga-install: quagga
+	install -D quagga/zebra/zebra $(INSTALLDIR)/quagga/usr/sbin/zebra
+	install -D quagga/ripd/ripd $(INSTALLDIR)/quagga/usr/sbin/ripd
+	install -D quagga/ospfd/ospfd $(INSTALLDIR)/quagga/usr/sbin/ospfd
+	install -D $(LIBDIR)/librt-0.9.30.1.so $(TARGETDIR)/lib/librt.so.0
+	$(STRIP) $(INSTALLDIR)/quagga/usr/sbin/zebra
+	$(STRIP) $(INSTALLDIR)/quagga/usr/sbin/ripd
+	$(STRIP) $(INSTALLDIR)/quagga/usr/sbin/ospfd
+
+
+
+ucarp/stamp-h1:
+	@cd ucarp && rm -f config.cache && \
+	CC=$(CC) AR=$(AR) RANLIB=$(RANLIB) LD=$(LD) LIBS="-L$(TOP)/libpcap -lpcap" \
+	CFLAGS="-Os -Wall $(EXTRACFLAGS) -ffunction-sections -fdata-sections -I$(TOP)/libpcap" \
+	LDFLAGS="-ffunction-sections -fdata-sections -Wl,--gc-sections -fPIC" \
+	$(CONFIGURE) --sysconfdir=/etc --disable-shared --enable-static --disable-rpath 
+	@touch ucarp/stamp-h1
+
+ucarp: ucarp/stamp-h1
+	@$(MAKE) -C ucarp CC=$(CC) AR=$(AR) RANLIB=$(RANLIB) LD=$(LD) 
+
+ucarp-clean:
+	-@$(MAKE) -C ucarp clean
+	@rm -f ucarp/stamp-h1
+
+ucarp-install: ucarp
+	install -D ucarp/src/ucarp $(INSTALLDIR)/ucarp/usr/sbin/ucarp
+
+
+fprobe-ulog/stamp-h1:
+	@cd fprobe-ulog && rm -f config.cache && \
 	CC=$(CC) AR=$(AR) RANLIB=$(RANLIB) LD=$(LD) \
 	CFLAGS="-Os -Wall $(EXTRACFLAGS) -ffunction-sections -fdata-sections" \
 	LDFLAGS="-ffunction-sections -fdata-sections -Wl,--gc-sections -fPIC" \
-	$(CONFIGURE) --sysconfdir=/etc \
-	--enable-netlink $(if $(TCONFIG_IPV6),--enable-ipv6,--disable-ipv6) --disable-ripngd --disable-ospfd --disable-doc \
-	--disable-ospf6d --disable-bgpd --disable-bgpd-announce
-	@touch zebra/stamp-h1
+	$(CONFIGURE) --sysconfdir=/etc 
+	@touch fprobe-ulog/stamp-h1
 
-zebra: zebra/stamp-h1
-	@$(MAKE) -C zebra CC=$(CC) AR=$(AR) RANLIB=$(RANLIB) LD=$(LD)
+fprobe-ulog: fprobe-ulog/stamp-h1
+	@$(MAKE) -C fprobe-ulog CC=$(CC) AR=$(AR) RANLIB=$(RANLIB) LD=$(LD)
 
-zebra-clean:
-	-@$(MAKE) -C zebra clean
-	@rm -f zebra/stamp-h1
+fprobe-ulog-clean:
+	-@$(MAKE) -C fprobe-ulog clean
+	@rm -f fprobe-ulog/stamp-h1
 
-zebra-install: zebra
-	install -D zebra/zebra/zebra $(INSTALLDIR)/zebra/usr/sbin/zebra
-	install -D zebra/ripd/ripd $(INSTALLDIR)/zebra/usr/sbin/ripd
-	install -D zebra/lib/libzebra.so $(INSTALLDIR)/zebra/usr/lib/libzebra.so
-	$(STRIP) $(INSTALLDIR)/zebra/usr/sbin/zebra
-	$(STRIP) $(INSTALLDIR)/zebra/usr/sbin/ripd
-	$(STRIP) $(INSTALLDIR)/zebra/usr/lib/libzebra.so
+fprobe-ulog-install: fprobe-ulog
+	install -D fprobe-ulog/src/fprobe-ulog $(INSTALLDIR)/fprobe-ulog/usr/sbin/fprobe-ulog
+	$(STRIP) $(INSTALLDIR)/fprobe-ulog/usr/sbin/fprobe-ulog
 
+libpcap/stamp-h1:
+	@cd libpcap && rm -f config.cache && \
+	CC=$(CC) AR=$(AR) RANLIB=$(RANLIB) LD=$(LD) \
+	CFLAGS="-Os -Wall $(EXTRACFLAGS) -ffunction-sections -fdata-sections" \
+	LDFLAGS="-ffunction-sections -fdata-sections -Wl,--gc-sections -fPIC" \
+	$(CONFIGURE) --sysconfdir=/etc --with-pcap=linux
+	@touch libpcap/stamp-h1
 
+libpcap: libpcap/stamp-h1
+	@$(MAKE) -C libpcap CC=$(CC) AR=$(AR) RANLIB=$(RANLIB) LD=$(LD)
+
+libpcap-clean:
+	-@$(MAKE) -C libpcap clean
+	@rm -f libpcap/stamp-h1
+
+libpcap-install: libpcap
+	install -D libpcap/libpcap.so.1.5.2 $(INSTALLDIR)/libpcap/usr/lib/libpcap.so
+	$(STRIP) $(INSTALLDIR)/libpcap/usr/lib/libpcap.so
+
+tcpdump/stamp-h1:
+	@cd tcpdump && rm -f config.cache && \
+	CC=$(CC) AR=$(AR) RANLIB=$(RANLIB) LD=$(LD) ac_cv_linux_vers=2 \
+	CFLAGS="-Os -Wall $(EXTRACFLAGS) -ffunction-sections -fdata-sections" \
+	LDFLAGS="-ffunction-sections -fdata-sections -Wl,--gc-sections -fPIC" \
+	$(CONFIGURE) --sysconfdir=/etc 
+	@touch tcpdump/stamp-h1
+
+tcpdump: tcpdump/stamp-h1
+	@$(MAKE) -C tcpdump CC=$(CC) AR=$(AR) RANLIB=$(RANLIB) LD=$(LD)
+
+tcpdump-clean:
+	-@$(MAKE) -C tcpdump clean
+	@rm -f tcpdump/stamp-h1
+
+tcpdump-install: tcpdump
+	install -D tcpdump/tcpdump $(INSTALLDIR)/tcpdump/usr/bin/tcpdump
+	$(STRIP) $(INSTALLDIR)/tcpdump/usr/bin/tcpdump
 rp-l2tp-install:
 	install -d $(INSTALLDIR)/rp-l2tp/usr/lib/l2tp
 	install rp-l2tp/handlers/*.so $(INSTALLDIR)/rp-l2tp/usr/lib/l2tp
@@ -1862,10 +1946,10 @@ snmp/stamp-h1:
 	$(CONFIGURE) --prefix=/usr --with-endianness=little --enable-mini-agent --disable-debugging \
 	--disable-privacy --without-opaque-special-types --with-persistent-directory=/tmp/snmp-persist \
 	--with-default-snmp-version=3 --with-sys-contact=root --with-sys-location=Unknown --with-logfile=/dev/null \
-	--with-out-transports=UDPIPv6,TCPIPv6,AAL5PVC,IPX,TCP,Unix --enable-shared=no --enable-static --with-gnu-ld \
+	--with-out-transports=UDPIPv6,TCPIPv6,AAL5PVC,IPX,TCP --enable-shared=no --enable-static --with-gnu-ld \
 	--enable-internal-md5 --with-copy-persistent-files=no --without-openssl -sysconfdir=/tmp \
-	--with-mib-modules=mibII,host,mibII/ip,mibII/tcp,mibII/udp,mibII/icmp,mibII/var_route,mibII/kernel_linux,qos,ucd_snmp \
-	--with-out-mib-modules=snmpv3mibs,agent_mips,agentx,notification,utilities,target --disable-ipv6 --with-defaults \
+	--with-mib-modules=agentx,smux,mibII,host,mibII/ip,mibII/tcp,mibII/udp,mibII/icmp,mibII/var_route,mibII/kernel_linux,ucd_snmp,utilities,target \
+	--with-out-mib-modules=snmpv3mibs,agent_mips,notification --disable-ipv6 --with-defaults \
 	--without-efence --without-rsaref --without-kmem-usage --without-rpm --without-dmalloc
 	touch snmp/stamp-h1
 

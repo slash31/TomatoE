@@ -463,18 +463,11 @@ const defaults_t defaults[] = {
 	{ "routes_static",		""				},
 	{ "dhcp_routes",		"1"				},
 	{ "wk_mode",			"gateway"		},	// Network mode [gateway|router]
-#ifdef TCONFIG_ZEBRA
-	{ "dr_setting",			"0"				},	// [ Disable | WAN | LAN | Both ]
-	{ "dr_lan_tx",			"0"				},	// Dynamic-Routing LAN out
-	{ "dr_lan_rx",			"0"				},	// Dynamic-Routing LAN in
-	{ "dr_lan1_tx",			"0"				},	// Dynamic-Routing LAN out
-	{ "dr_lan1_rx",			"0"				},	// Dynamic-Routing LAN in
-	{ "dr_lan2_tx",			"0"				},	// Dynamic-Routing LAN out
-	{ "dr_lan2_rx",			"0"				},	// Dynamic-Routing LAN in
-	{ "dr_lan3_tx",			"0"				},	// Dynamic-Routing LAN out
-	{ "dr_lan3_rx",			"0"				},	// Dynamic-Routing LAN in
-	{ "dr_wan_tx",			"0"				},	// Dynamic-Routing WAN out
-	{ "dr_wan_rx",			"0"				},	// Dynamic-Routing WAN in
+#ifdef TCONFIG_RIP
+	{ "drr_enable",			"0"				},	// enable Quagga RIP routing daemon
+#endif
+#ifdef TCONFIG_OSPF
+	{ "dro_enable",			"0"				},	// enable Quagga OSPF routing daemon
 #endif
 
 // advanced-vlan
@@ -756,6 +749,13 @@ const defaults_t defaults[] = {
 	{ "snmp_location",		"router"			},
 	{ "snmp_contact",		"admin@tomato"			},
 	{ "snmp_ro",			"rocommunity"			},
+#endif
+
+#ifdef TCONFIG_NETFLOW
+	{ "nflow_enable",		"0"				},
+	{ "nflow_collector",		""				},
+	{ "nflow_extra_args",		""				},
+	{ "nflow_ver",			"5"				},
 #endif
 
 #ifdef TCONFIG_SAMBASRV

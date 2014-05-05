@@ -39,10 +39,6 @@ config TCONFIG_JFFSV1
 	depends on TCONFIG_JFFS2
 	default y
 
-config TCONFIG_ZEBRA
-	bool "Zebra"
-	default y
-
 config TCONFIG_DDNS
 	bool "Dynamic DNS"
 	default y
@@ -140,6 +136,30 @@ config TCONFIG_NFS
 
 config TCONFIG_SNMP
 	bool "  SNMP"
+	default n
+
+config TCONFIG_QUAGGA
+	bool "  QUAGGA"
+	default n
+
+config TCONFIG_RIP
+	bool "  RIP"
+	default n
+
+config TCONFIG_OSPF
+	bool "  OSPF"
+	default n
+
+config TCONFIG_NETFLOW
+	bool "  NETFLOW"
+	default n
+
+config TCONFIG_TCPDUMP
+	bool "  TCPDUMP"
+	default n
+
+config TCONFIG_UCARP
+	bool "  UCARP"
 	default n
 
 config TCONFIG_SDHC

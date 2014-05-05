@@ -218,7 +218,7 @@ function ethstates()
 	E("ports").innerHTML = code;
 }
 
-function anon_update()
+/* function anon_update()
 {
 	update = anonupdate.update;
 	if (update == "no") { return 0; }
@@ -227,7 +227,7 @@ function anon_update()
 	code += '<div class="fields"><center>Tomato by Shibby ' + update + ' is now available. <a target="_blank" href="http://tomato.groov.pl/">Click here to read more</a>.</center></div>';
 	code += '<br></div>';
 	E("nversion").innerHTML = code;
-}
+} */
 
 function show()
 {

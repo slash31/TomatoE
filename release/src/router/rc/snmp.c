@@ -25,6 +25,7 @@ void start_snmp(void)
             fprintf(fp, "syslocation %s\n", nvram_safe_get( "snmp_location" ) );
             fprintf(fp, "syscontact %s <%s>\n", nvram_safe_get( "snmp_contact" ),nvram_safe_get( "snmp_contact" ) );
             fprintf(fp, "rocommunity %s\n", nvram_safe_get( "snmp_ro" ) );
+            fprintf(fp, "master agentx\n");
 
     fclose( fp );
     chmod( "/etc/snmpd.conf", 0644 );

@@ -11,6 +11,10 @@
 	Tomato VLAN update and bug correction
 	Copyright (C) 2011-2012 Vicente Soriano
 	http://tomatoraf.com
+
+	Tomato Native VLAN support added Jan
+	2014 by Aaron Finney
+	http://slash31.net/ 
 	
 	For use with Tomato Firmware only.
 	No part of this file may be used without permission.
@@ -50,7 +54,7 @@
 <script type='text/javascript' src='wireless.jsx?_http_id=<% nv(http_id); %>'></script>
 <script type='text/javascript' src='interfaces.js'></script>
 <script type='text/javascript'>
-<% nvram ("vlan0ports,vlan1ports,vlan2ports,vlan3ports,vlan4ports,vlan5ports,vlan6ports,vlan7ports,vlan8ports,vlan9ports,vlan10ports,vlan11ports,vlan12ports,vlan13ports,vlan14ports,vlan15ports,vlan0hwname,vlan1hwname,vlan2hwname,vlan3hwname,vlan4hwname,vlan5hwname,vlan6hwname,vlan7hwname,vlan8hwname,vlan9hwname,vlan10hwname,vlan11hwname,vlan12hwname,vlan13hwname,vlan14hwname,vlan15hwname,wan_ifnameX,manual_boot_nv,boardtype,boardflags,trunk_vlan_so,lan_ifname,lan_ifnames,lan1_ifname,lan1_ifnames,lan2_ifname,lan2_ifnames,lan3_ifname,lan3_ifnames,boardrev,vlan0tag,vlan0vid,vlan1vid,vlan2vid,vlan3vid,vlan4vid,vlan5vid,vlan6vid,vlan7vid,vlan8vid,vlan9vid,vlan10vid,vlan11vid,vlan12vid,vlan13vid,vlan14vid,vlan15vid");%>
+<% nvram ("vlan0ports,vlan1ports,vlan2ports,vlan3ports,vlan4ports,vlan5ports,vlan6ports,vlan7ports,vlan8ports,vlan9ports,vlan10ports,vlan11ports,vlan12ports,vlan13ports,vlan14ports,vlan15ports,vlan0hwname,vlan1hwname,vlan2hwname,vlan3hwname,vlan4hwname,vlan5hwname,vlan6hwname,vlan7hwname,vlan8hwname,vlan9hwname,vlan10hwname,vlan11hwname,vlan12hwname,vlan13hwname,vlan14hwname,vlan15hwname,wan_ifnameX,manual_boot_nv,boardtype,boardflags,trunk_vlan_so,trunk_native_en,lan_ifname,lan_ifnames,lan1_ifname,lan1_ifnames,lan2_ifname,lan2_ifnames,lan3_ifname,lan3_ifnames,boardrev,vlan0tag,vlan0vid,vlan1vid,vlan2vid,vlan3vid,vlan4vid,vlan5vid,vlan6vid,vlan7vid,vlan8vid,vlan9vid,vlan10vid,vlan11vid,vlan12vid,vlan13vid,vlan14vid,vlan15vid");%>
 
 var port_vlan_supported = 0;
 var trunk_vlan_supported = 0;
@@ -253,6 +257,7 @@ function save() {
 
   var fom = E('_fom');
   fom.trunk_vlan_so.value = (E('_f_trunk_vlan_so').checked ? 1 : 0);
+  fom.trunk_native_en.value = (E('_f_trunk_native_en').checked ? 1 : 0);
 // wipe out relevant fields just in case this is not the first time we try to submit
   for (var i = 0 ; i <= MAX_VLAN_ID ; i++) {
     fom['vlan' + i + 'ports'].value = '';
@@ -583,44 +588,95 @@ REMOVE-END */
       f[COL_P4T].checked=0;
     }
 
+// Modifications to allow Native VLAN support
     if ((f[COL_P0].checked == 1) && (this.countElem(COL_P0,1)>0)) {
-      if (((this.countElem(COL_P0,1) != this.countElem(COL_P0T,1)) || (f[COL_P0T].checked==0))) {
-        ferror.set(f[COL_P0T], 'Port 1 cannot be assigned to more than one VLAN unless frames are tagged on all VLANs Port 1 is member', quiet);
-        valid=0;
+      if (E('_f_trunk_native_en').checked == 1 ) {
+        // allow one untagged vlan per port (i.e. Cisco native VLAN support)
+        if (((this.countElem(COL_P0,1)-1) >= this.countElem(COL_P0T,1)) && (f[COL_P0T].checked==0)) {
+          ferror.set(f[COL_P0T], 'Only one untagged VLAN per port is allowed when Native VLAN Support is enabled', quiet);
+          valid=0;
+        } else {
+          ferror.clear(f[COL_P0T]);
+        }
       } else {
-        ferror.clear(f[COL_P0T]);
+        if (((this.countElem(COL_P0,1) != this.countElem(COL_P0T,1)) || (f[COL_P0T].checked==0))) {
+          ferror.set(f[COL_P0T], 'Port 1 cannot be assigned to more than one VLAN unless frames are tagged on all VLANs Port 1 is member', quiet);
+          valid=0;
+        } else {
+          ferror.clear(f[COL_P0T]);
+        }
       }
     }
     if ((f[COL_P1].checked == 1) && (this.countElem(COL_P1,1)>0)) {
-      if (((this.countElem(COL_P1,1) != this.countElem(COL_P1T,1)) || (f[COL_P1T].checked==0))) {
-        ferror.set(f[COL_P1T], 'Port 2 cannot be assigned to more than one VLAN unless frames are tagged on all VLANs Port 2 is member', quiet);
-        valid=0;
+      if (E('_f_trunk_native_en').checked == 1 ) {
+        // allow one untagged vlan per port (i.e. Cisco native VLAN support)
+        if (((this.countElem(COL_P1,1)-1) >= this.countElem(COL_P1T,1)) && (f[COL_P1T].checked==0)) {
+          ferror.set(f[COL_P1T], 'Only one untagged VLAN per port is allowed when Native VLAN Support is enabled', quiet);
+          valid=0;
+        } else {
+          ferror.clear(f[COL_P1T]);
+        }
       } else {
-        ferror.clear(f[COL_P1T]);
+        if (((this.countElem(COL_P1,1) != this.countElem(COL_P1T,1)) || (f[COL_P1T].checked==0))) {
+          ferror.set(f[COL_P1T], 'Port 2 cannot be assigned to more than one VLAN unless frames are tagged on all VLANs Port 2 is member', quiet);
+          valid=0;
+        } else {
+          ferror.clear(f[COL_P1T]);
+        }
       }
     }
     if ((f[COL_P2].checked == 1) && (this.countElem(COL_P2,1)>0)) {
-      if (((this.countElem(COL_P2,1) != this.countElem(COL_P2T,1)) || (f[COL_P2T].checked==0))) {
-        ferror.set(f[COL_P2T], 'Port 3 cannot be assigned to more than one VLAN unless frames are tagged on all VLANs Port 3 is member', quiet);
-        valid=0;
+      if (E('_f_trunk_native_en').checked == 1 ) {
+        // allow one untagged vlan per port (i.e. Cisco native VLAN support)
+        if (((this.countElem(COL_P2,1)-1) >= this.countElem(COL_P2T,1)) && (f[COL_P2T].checked==0)) {
+          ferror.set(f[COL_P2T], 'Only one untagged VLAN per port is allowed when Native VLAN Support is enabled', quiet);
+          valid=0;
+        } else {
+          ferror.clear(f[COL_P2T]);
+        }
       } else {
-        ferror.clear(f[COL_P2T]);
+        if (((this.countElem(COL_P2,1) != this.countElem(COL_P2T,1)) || (f[COL_P2T].checked==0))) {
+          ferror.set(f[COL_P2T], 'Port 3 cannot be assigned to more than one VLAN unless frames are tagged on all VLANs Port 3 is member', quiet);
+          valid=0;
+        } else {
+          ferror.clear(f[COL_P2T]);
+        }
       }
     }
     if ((f[COL_P3].checked == 1) && (this.countElem(COL_P3,1)>0)) {
-      if (((this.countElem(COL_P3,1) != this.countElem(COL_P3T,1)) || (f[COL_P3T].checked==0))) {
-        ferror.set(f[COL_P3T], 'Port 4 cannot be assigned to more than one VLAN unless frames are tagged on all VLANs Port 4 is member', quiet);
-        valid=0;
+      if (E('_f_trunk_native_en').checked == 1 ) {
+        // allow one untagged vlan per port (i.e. Cisco native VLAN support)
+        if (((this.countElem(COL_P3,1)-1) >= this.countElem(COL_P3T,1)) && (f[COL_P3T].checked==0)) {
+          ferror.set(f[COL_P3T], 'Only one untagged VLAN per port is allowed when Native VLAN Support is enabled', quiet);
+          valid=0;
+        } else {
+          ferror.clear(f[COL_P3T]);
+        }
       } else {
-        ferror.clear(f[COL_P3T]);
+        if (((this.countElem(COL_P3,1) != this.countElem(COL_P3T,1)) || (f[COL_P3T].checked==0))) {
+          ferror.set(f[COL_P3T], 'Port 4 cannot be assigned to more than one VLAN unless frames are tagged on all VLANs Port 4 is member', quiet);
+          valid=0;
+        } else {
+          ferror.clear(f[COL_P3T]);
+        }
       }
     }
     if ((f[COL_P4].checked == 1) && (this.countElem(COL_P4,1)>0)) {
-      if (((this.countElem(COL_P4,1) != this.countElem(COL_P4T,1)) || (f[COL_P4T].checked==0))) {
-        ferror.set(f[COL_P4T], 'WAN port cannot be assigned to more than one VLAN unless frames are tagged on all VLANs WAN port is member', quiet);
-        valid=0;
+      if (E('_f_trunk_native_en').checked == 1 ) {
+        // allow one untagged vlan per port (i.e. Cisco native VLAN support)
+        if (((this.countElem(COL_P4,1)-1) >= this.countElem(COL_P4T,1)) && (f[COL_P4T].checked==0)) {
+          ferror.set(f[COL_P4T], 'Only one untagged VLAN per port is allowed when Native VLAN Support is enabled', quiet);
+          valid=0;
+        } else {
+          ferror.clear(f[COL_P4T]);
+        }
       } else {
-        ferror.clear(f[COL_P4T]);
+        if (((this.countElem(COL_P4,1) != this.countElem(COL_P4T,1)) || (f[COL_P4T].checked==0))) {
+          ferror.set(f[COL_P4T], 'The WAN port cannot be assigned to more than one VLAN unless frames are tagged on all VLANs it is member of', quiet);
+          valid=0;
+        } else {
+          ferror.clear(f[COL_P4T]);
+        }
       }
     }
 
@@ -909,6 +965,7 @@ function earlyInit() {
 <input type='hidden' name='lan2_ifnames'>
 <input type='hidden' name='lan3_ifnames'>
 <input type='hidden' name='trunk_vlan_so'>
+<input type='hidden' name='trunk_native_en'>
 <input type='hidden' name='vlan0vid'>
 <input type='hidden' name='vlan1vid'>
 <input type='hidden' name='vlan2vid'>
@@ -968,6 +1025,7 @@ if(port_vlan_supported) vlg.setup();
 <script type='text/javascript'>
 createFieldTable('', [
   { title: 'Enable', name: 'f_trunk_vlan_so', type: 'checkbox', value: nvram.trunk_vlan_so == '1' },
+  { title: 'Native VLANs', name: 'f_trunk_native_en', type: 'checkbox', value: nvram.trunk_native_en == '1' },
 ]);
 </script>
 </div>

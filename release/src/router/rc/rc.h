@@ -188,8 +188,6 @@ extern void stop_dhcp6c(void);
 // services.c
 extern void start_cron(void);
 extern void stop_cron(void);
-extern void start_zebra(void);
-extern void stop_zebra(void);
 extern void start_upnp(void);
 extern void stop_upnp(void);
 extern void start_syslog(void);
@@ -453,6 +451,36 @@ extern void stop_nfs();
 #ifdef TCONFIG_SNMP
 extern void start_snmp();
 extern void stop_snmp();
+#endif
+
+// netflow.c
+#ifdef TCONFIG_NETFLOW
+extern void start_netflow();
+extern void stop_netflow();
+#endif
+
+// tcpdump.c
+#ifdef TCONFIG_TCPDUMP
+extern void start_tcpdump();
+extern void stop_tcpdump();
+#endif
+
+// zebra.c
+#ifdef TCONFIG_QUAGGA
+extern void start_zebra();
+extern void stop_zebra();
+#endif
+
+// rip.c
+#ifdef TCONFIG_RIP
+extern void start_rip();
+extern void stop_rip();
+#endif
+
+// ospf.c
+#ifdef TCONFIG_OSPF
+extern void start_ospf();
+extern void stop_ospf();
 #endif
 
 //tor.c

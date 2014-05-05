@@ -978,8 +978,8 @@ void start_wan_done(char *wan_ifname)
 	// and routes supplied via DHCP
 	do_wan_routes(using_dhcpc() ? nvram_safe_get("wan_ifname") : wan_ifname, 0, 1);
 
-	stop_zebra();
-	start_zebra();
+//	stop_zebra();
+//	start_zebra();
 
 	wanup = check_wanup();
 	
