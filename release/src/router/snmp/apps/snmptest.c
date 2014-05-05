@@ -45,11 +45,7 @@ SOFTWARE.
 #include <stdio.h>
 #include <ctype.h>
 #if TIME_WITH_SYS_TIME
-# ifdef WIN32
-#  include <sys/timeb.h>
-# else
-#  include <sys/time.h>
-# endif
+# include <sys/time.h>
 # include <time.h>
 #else
 # if HAVE_SYS_TIME_H
@@ -60,9 +56,6 @@ SOFTWARE.
 #endif
 #if HAVE_SYS_SELECT_H
 #include <sys/select.h>
-#endif
-#if HAVE_WINSOCK_H
-#include <winsock.h>
 #endif
 #if HAVE_NETDB_H
 #include <netdb.h>
@@ -102,9 +95,11 @@ main(int argc, char *argv[])
      * get the common command line arguments 
      */
     switch (snmp_parse_args(argc, argv, &session, NULL, NULL)) {
-    case -2:
+    case NETSNMP_PARSE_ARGS_ERROR:
+        exit(1);
+    case NETSNMP_PARSE_ARGS_SUCCESS_EXIT:
         exit(0);
-    case -1:
+    case NETSNMP_PARSE_ARGS_ERROR_USAGE:
         usage();
         exit(1);
     default:
@@ -127,7 +122,7 @@ main(int argc, char *argv[])
     }
 
     varcount = 0;
-    while (1) {
+    for(;;) {
         vars = NULL;
         for (ret = 1; ret != 0;) {
             vp = (netsnmp_variable_list *)
@@ -168,7 +163,11 @@ main(int argc, char *argv[])
                     } else {
                         printf("What repeat count? ");
                         fflush(stdout);
-                        fgets(input, sizeof(input), stdin);
+                        if (!fgets(input, sizeof(input), stdin)) {
+                            printf("Quitting,  Goodbye\n");
+                            SOCK_CLEANUP;
+                            exit(0);
+                        }
                         maxRepetitions = atoi(input);
                         pdu->non_repeaters = nonRepeaters;
                         pdu->max_repetitions = maxRepetitions;
@@ -229,12 +228,15 @@ main(int argc, char *argv[])
                     }
                     transport = snmp_sess_transport(snmp_sess_pointer(ss));
                     if (transport != NULL && transport->f_fmtaddr != NULL) {
-                        char           *s = transport->f_fmtaddr(transport,
+                        char *addr_string = transport->f_fmtaddr(transport,
                                                                  response->
                                                                  transport_data,
                                                                  response->
                                                                  transport_data_length);
-                        printf("from %s\n", s);
+                        if (addr_string != NULL) {
+                            printf("from %s\n", addr_string);
+                            free(addr_string);
+                        }
                     } else {
                         printf("from <UNKNOWN>\n");
                     }
@@ -274,17 +276,15 @@ main(int argc, char *argv[])
         varcount = 0;
         nonRepeaters = -1;
     }
-    SOCK_CLEANUP;
-    return 0;
+    /* NOTREACHED */
 }
 
 int
 input_variable(netsnmp_variable_list * vp)
 {
     char            buf[256];
-    int             val_len;
-    u_char          value[256], ch;
-    oid             name[MAX_OID_LEN];
+    size_t          val_len;
+    u_char          ch;
 
     printf("Variable: ");
     fflush(stdout);
@@ -302,7 +302,7 @@ input_variable(netsnmp_variable_list * vp)
     if (buf[val_len - 1] == '\n')
         buf[--val_len] = 0;
     if (*buf == '$') {
-        switch (toupper(buf[1])) {
+        switch (toupper((unsigned char)(buf[1]))) {
         case 'G':
             command = SNMP_MSG_GET;
             printf("Request type is Get Request\n");
@@ -342,7 +342,7 @@ input_variable(netsnmp_variable_list * vp)
             }
             break;
         case 'Q':
-            switch ((toupper(buf[2]))) {
+            switch ((toupper((unsigned char)(buf[2])))) {
             case '\n':
             case 0:
                 printf("Quitting,  Goodbye\n");
@@ -365,19 +365,25 @@ input_variable(netsnmp_variable_list * vp)
         }
         return -1;
     }
-    vp->name_length = MAX_OID_LEN;
-    if (!snmp_parse_oid(buf, name, &vp->name_length)) {
-        snmp_perror(buf);
-        return -1;
+    {
+	oid     name[MAX_OID_LEN];
+	vp->name_length = MAX_OID_LEN;
+	if (!snmp_parse_oid(buf, name, &vp->name_length)) {
+	    snmp_perror(buf);
+	    return -1;
+	}
+	vp->name = snmp_duplicate_objid(name, vp->name_length);
     }
-    vp->name = (oid *) malloc(vp->name_length * sizeof(oid));
-    memmove(vp->name, name, vp->name_length * sizeof(oid));
 
     if (command == SNMP_MSG_SET || command == SNMP_MSG_INFORM
         || command == SNMP_MSG_TRAP2) {
         printf("Type [i|u|s|x|d|n|o|t|a]: ");
         fflush(stdout);
-        fgets(buf, sizeof(buf), stdin);
+        if (!fgets(buf, sizeof(buf), stdin)) {
+            printf("Quitting,  Goodbye\n");
+            SOCK_CLEANUP;
+            exit(0);
+        }
         ch = *buf;
         switch (ch) {
         case 'i':
@@ -416,7 +422,11 @@ input_variable(netsnmp_variable_list * vp)
       getValue:
         printf("Value: ");
         fflush(stdout);
-        fgets(buf, sizeof(buf), stdin);
+        if (!fgets(buf, sizeof(buf), stdin)) {
+            printf("Quitting,  Goodbye\n");
+            SOCK_CLEANUP;
+            exit(0);
+        }
         switch (vp->type) {
         case ASN_INTEGER:
             vp->val.integer = (long *) malloc(sizeof(long));
@@ -453,6 +463,7 @@ input_variable(netsnmp_variable_list * vp)
                     goto getValue;
                 }
                 memcpy(vp->val.string, buf, strlen(buf) - 1);
+                vp->val.string[sizeof(vp->val.string)-1] = 0;
                 vp->val_len = strlen(buf) - 1;
             } else if (ch == 'x') {
                 size_t          buf_len = 256;
@@ -477,11 +488,16 @@ input_variable(netsnmp_variable_list * vp)
         case ASN_OBJECT_ID:
             if ('\n' == buf[strlen(buf) - 1])
                 buf[strlen(buf) - 1] = '\0';
-            vp->val_len = MAX_OID_LEN;;
-            read_objid(buf, (oid *) value, &vp->val_len);
-            vp->val_len *= sizeof(oid);
-            vp->val.objid = (oid *) malloc(vp->val_len);
-            memmove(vp->val.objid, value, vp->val_len);
+	    else {
+		oid value[MAX_OID_LEN];
+		vp->val_len = MAX_OID_LEN;
+		if (0 == read_objid(buf, value, &vp->val_len)) {
+		    printf("Unrecognised OID value\n");
+		    goto getValue;
+		}
+		vp->val.objid = snmp_duplicate_objid(value, vp->val_len);
+		vp->val_len *= sizeof(oid);
+	    }
             break;
         case ASN_TIMETICKS:
             vp->val.integer = (long *) malloc(sizeof(long));

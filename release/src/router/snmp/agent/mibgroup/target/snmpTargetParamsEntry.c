@@ -15,9 +15,6 @@
 #endif
 #include <stdlib.h>
 #include <ctype.h>
-#if HAVE_WINSOCK_H
-#include <winsock.h>
-#endif
 
 #include <net-snmp/net-snmp-includes.h>
 #include <net-snmp/agent/net-snmp-agent-includes.h>
@@ -30,7 +27,7 @@
 oid             snmpTargetParamsOID[snmpTargetParamsOIDLen] =
     { 1, 3, 6, 1, 6, 3, 12, 1, 3, 1, 0 };
 
-static struct targetParamTable_struct *aPTable = 0;
+static struct targetParamTable_struct *aPTable = NULL;
 
 
 /*
@@ -51,16 +48,16 @@ snmpTargetParamTable_create(void)
     newEntry = (struct targetParamTable_struct *)
         malloc(sizeof(struct targetParamTable_struct));
 
-    newEntry->paramName = 0;
+    newEntry->paramName = NULL;
     newEntry->mpModel = -1;
 
     newEntry->secModel = -1;
-    newEntry->secName = 0;
+    newEntry->secName = NULL;
     newEntry->secLevel = -1;
 
     newEntry->storageType = SNMP_STORAGE_NONVOLATILE;
     newEntry->rowStatus = SNMP_ROW_NONEXISTENT;
-    newEntry->next = 0;
+    newEntry->next = NULL;
     return newEntry;
 }
 
@@ -98,7 +95,7 @@ snmpTargetParamTable_addToList(struct targetParamTable_struct *newEntry,
     /*
      * if the list is empty, add the new entry to the top 
      */
-    if ((prev_struct = curr_struct = *listPtr) == 0) {
+    if ((prev_struct = curr_struct = *listPtr) == NULL) {
         *listPtr = newEntry;
         return;
     } else {
@@ -113,7 +110,7 @@ snmpTargetParamTable_addToList(struct targetParamTable_struct *newEntry,
         /*
          * search through the list for an equal or greater OID value 
          */
-        while (curr_struct != 0) {
+        while (curr_struct != NULL) {
             currOIDLen = strlen(curr_struct->paramName);
             for (i = 0; i < (int) currOIDLen; i++) {
                 currOID[i] = curr_struct->paramName[i];
@@ -168,14 +165,14 @@ snmpTargetParamTable_remFromList(struct targetParamTable_struct *oldEntry,
 {
     struct targetParamTable_struct *tptr;
 
-    if ((tptr = *listPtr) == 0)
+    if ((tptr = *listPtr) == NULL)
         return;
     else if (tptr == oldEntry) {
         *listPtr = (*listPtr)->next;
         snmpTargetParamTable_dispose(tptr);
         return;
     } else {
-        while (tptr->next != 0) {
+        while (tptr->next != NULL) {
             if (tptr->next == oldEntry) {
                 tptr->next = tptr->next->next;
                 snmpTargetParamTable_dispose(oldEntry);
@@ -205,7 +202,7 @@ search_snmpTargetParamsTable(oid * baseName,
      */
     memcpy(newNum, baseName, baseNameLen * sizeof(oid));
 
-    for (temp_struct = aPTable; temp_struct != 0;
+    for (temp_struct = aPTable; temp_struct != NULL;
          temp_struct = temp_struct->next) {
         for (i = 0; i < (int) strlen(temp_struct->paramName); i++) {
             newNum[baseNameLen + i] = temp_struct->paramName[i];
@@ -223,7 +220,7 @@ search_snmpTargetParamsTable(oid * baseName,
             return temp_struct;
         }
     }
-    return (0);
+    return NULL;
 }                               /* search_snmpTargetParamsTable */
 
 
@@ -236,7 +233,7 @@ int
 snmpTargetParams_rowStatusCheck(struct targetParamTable_struct *entry)
 {
     if ((entry->mpModel < 0) || (entry->secModel < 0) ||
-        (entry->secLevel < 0) || (entry->secName == 0))
+        (entry->secLevel < 0) || (entry->secName == NULL))
         return 0;
     else
         return 1;
@@ -254,17 +251,17 @@ snmpTargetParams_rowStatusCheck(struct targetParamTable_struct *entry)
  */
 
 struct variable2 snmpTargetParamsEntry_variables[] = {
-    {SNMPTARGETPARAMSMPMODEL, ASN_INTEGER, RWRITE,
+    {SNMPTARGETPARAMSMPMODEL, ASN_INTEGER, NETSNMP_OLDAPI_RWRITE,
      var_snmpTargetParamsEntry, 1, {SNMPTARGETPARAMSMPMODELCOLUMN}},
-    {SNMPTARGETPARAMSSECURITYMODEL, ASN_INTEGER, RWRITE,
+    {SNMPTARGETPARAMSSECURITYMODEL, ASN_INTEGER, NETSNMP_OLDAPI_RWRITE,
      var_snmpTargetParamsEntry, 1, {SNMPTARGETPARAMSSECURITYMODELCOLUMN}},
-    {SNMPTARGETPARAMSSECURITYNAME, ASN_OCTET_STR, RWRITE,
+    {SNMPTARGETPARAMSSECURITYNAME, ASN_OCTET_STR, NETSNMP_OLDAPI_RWRITE,
      var_snmpTargetParamsEntry, 1, {SNMPTARGETPARAMSSECURITYNAMECOLUMN}},
-    {SNMPTARGETPARAMSSECURITYLEVEL, ASN_INTEGER, RWRITE,
+    {SNMPTARGETPARAMSSECURITYLEVEL, ASN_INTEGER, NETSNMP_OLDAPI_RWRITE,
      var_snmpTargetParamsEntry, 1, {SNMPTARGETPARAMSSECURITYLEVELCOLUMN}},
-    {SNMPTARGETPARAMSSTORAGETYPE, ASN_INTEGER, RWRITE,
+    {SNMPTARGETPARAMSSTORAGETYPE, ASN_INTEGER, NETSNMP_OLDAPI_RWRITE,
      var_snmpTargetParamsEntry, 1, {SNMPTARGETPARAMSSTORAGETYPECOLUMN}},
-    {SNMPTARGETPARAMSROWSTATUS, ASN_INTEGER, RWRITE,
+    {SNMPTARGETPARAMSROWSTATUS, ASN_INTEGER, NETSNMP_OLDAPI_RWRITE,
      var_snmpTargetParamsEntry, 1, {SNMPTARGETPARAMSROWSTATUSCOLUMN}}
 };
 
@@ -278,15 +275,15 @@ oid             snmpTargetParamsEntry_variables_oid[] =
 void
 init_snmpTargetParamsEntry(void)
 {
-    aPTable = 0;
+    aPTable = NULL;
 
     REGISTER_MIB("target/snmpTargetParamsEntry",
                  snmpTargetParamsEntry_variables, variable2,
                  snmpTargetParamsEntry_variables_oid);
 
     snmpd_register_config_handler("targetParams",
-                                  snmpd_parse_config_targetParams, 0,
-                                  NULL);
+                                  snmpd_parse_config_targetParams,
+                                  (void (*)(void))0, NULL);
 
     /*
      * we need to be called back later 
@@ -301,7 +298,7 @@ snmpTargetParams_addParamName(struct targetParamTable_struct *entry,
                               char *cptr)
 {
     size_t          len;
-    if (cptr == 0) {
+    if (cptr == NULL) {
         DEBUGMSGTL(("snmpTargetParamsEntry",
                     "ERROR snmpTargetParamsEntry: no param name in config string\n"));
         return (0);
@@ -315,9 +312,7 @@ snmpTargetParams_addParamName(struct targetParamTable_struct *entry,
                         "ERROR snmpTargetParamsEntry: param name out of range in config string\n"));
             return (0);
         }
-        entry->paramName = (char *) malloc(len + 1);
-        strncpy(entry->paramName, cptr, len);
-        entry->paramName[len] = '\0';
+        entry->paramName = strdup(cptr);
     }
     return (1);
 }
@@ -327,11 +322,11 @@ int
 snmpTargetParams_addMPModel(struct targetParamTable_struct *entry,
                             char *cptr)
 {
-    if (cptr == 0) {
+    if (cptr == NULL) {
         DEBUGMSGTL(("snmpTargetParamsEntry",
                     "ERROR snmpTargetParamsEntry: no mp model in config string\n"));
         return (0);
-    } else if (!(isdigit(*cptr))) {
+    } else if (!(isdigit((unsigned char)(*cptr)))) {
         DEBUGMSGTL(("snmpTargetParamsEntry",
                     "ERROR snmpTargeParamsEntry: mp model is not digit in config string\n"));
         return (0);
@@ -352,11 +347,11 @@ int
 snmpTargetParams_addSecModel(struct targetParamTable_struct *entry,
                              char *cptr)
 {
-    if (cptr == 0) {
+    if (cptr == NULL) {
         DEBUGMSGTL(("snmpTargetParamsEntry",
                     "ERROR snmpTargetParamsEntry: no sec model in config string\n"));
         return (0);
-    } else if (!(isdigit(*cptr))) {
+    } else if (!(isdigit((unsigned char)(*cptr)))) {
         DEBUGMSGTL(("snmpTargetParamsEntry",
                     "ERROR snmpTargeParamsEntry: security model is not digit in config string\n"));
         return (0);
@@ -378,16 +373,12 @@ int
 snmpTargetParams_addSecName(struct targetParamTable_struct *entry,
                             char *cptr)
 {
-    size_t          len;
-    if (cptr == 0) {
+    if (cptr == NULL) {
         DEBUGMSGTL(("snmpTargetParamsEntry",
                     "ERROR snmpTargetParamsEntry: no security name in config string\n"));
         return (0);
     } else {
-        len = strlen(cptr);
-        entry->secName = (char *) malloc(len + 1);
-        strncpy(entry->secName, cptr, len);
-        entry->secName[len] = '\0';
+        entry->secName = strdup(cptr);
     }
     return (1);
 }                               /* snmpTargetParams_addSecName  */
@@ -397,11 +388,11 @@ int
 snmpTargetParams_addSecLevel(struct targetParamTable_struct *entry,
                              char *cptr)
 {
-    if (cptr == 0) {
+    if (cptr == NULL) {
         DEBUGMSGTL(("snmpTargetParamsEntry",
                     "ERROR snmpTargetParamsEntry: no security level in config string\n"));
         return (0);
-    } else if (!(isdigit(*cptr))) {
+    } else if (!(isdigit((unsigned char)(*cptr)))) {
         DEBUGMSGTL(("snmpTargetParamsEntry",
                     "ERROR snmpTargeParamsEntry: security level is not digit in config string\n"));
         return (0);
@@ -423,11 +414,11 @@ int
 snmpTargetParams_addStorageType(struct targetParamTable_struct *entry,
                                 char *cptr)
 {
-    if (cptr == 0) {
+    if (cptr == NULL) {
         DEBUGMSGTL(("snmpTargetParamsEntry",
                     "ERROR snmpTargetParamsEntry: no storage type in config string\n"));
         return (0);
-    } else if (!(isdigit(*cptr))) {
+    } else if (!(isdigit((unsigned char)(*cptr)))) {
         DEBUGMSGTL(("snmpTargetParamsEntry",
                     "ERROR snmpTargeParamsEntry: storage type is not digit in config string\n"));
         return (0);
@@ -461,11 +452,11 @@ int
 snmpTargetParams_addRowStatus(struct targetParamTable_struct *entry,
                               char *cptr)
 {
-    if (cptr == 0) {
+    if (cptr == NULL) {
         DEBUGMSGTL(("snmpTargetParamsEntry",
                     "ERROR snmpTargetParamsEntry: no row status in config string\n"));
         return (0);
-    } else if (!(isdigit(*cptr))) {
+    } else if (!(isdigit((unsigned char)(*cptr)))) {
         DEBUGMSGTL(("snmpTargetParamsEntry",
                     "ERROR snmpTargeParamsEntry: row status is not digit in config string\n"));
         return (0);
@@ -541,13 +532,11 @@ snmpd_parse_config_targetParams(const char *token, char *char_ptr)
         snmpTargetParamTable_dispose(newEntry);
         return;
     }
-    snprintf(buff, sizeof(buff),
-            "snmp_parse_config_targetParams, read: %s %d %d %s %d %d %d\n",
-            newEntry->paramName, newEntry->mpModel, newEntry->secModel,
-            newEntry->secName, newEntry->secLevel, newEntry->storageType,
-            newEntry->rowStatus);
-    buff[ sizeof(buff)-1 ] = 0;
-    DEBUGMSGTL(("snmpTargetParamsEntry", buff));
+    DEBUGMSGTL(("snmpTargetParamsEntry",
+                "snmp_parse_config_targetParams, read: %s %d %d %s %d %d %d\n",
+                newEntry->paramName, newEntry->mpModel, newEntry->secModel,
+                newEntry->secName, newEntry->secLevel, newEntry->storageType,
+                newEntry->rowStatus));
 
     update_timestamp(newEntry);
     snmpTargetParamTable_addToList(newEntry, &aPTable);
@@ -572,14 +561,14 @@ store_snmpTargetParamsEntry(int majorID, int minorID, void *serverarg,
     char            line[1024];
 
     strcpy(line, "");
-    if ((curr_struct = aPTable) != 0) {
-        while (curr_struct != 0) {
+    if ((curr_struct = aPTable) != NULL) {
+        while (curr_struct != NULL) {
             if ((curr_struct->storageType == SNMP_STORAGE_NONVOLATILE ||
                  curr_struct->storageType == SNMP_STORAGE_PERMANENT)
                 &&
                 (curr_struct->rowStatus == SNMP_ROW_ACTIVE ||
                  curr_struct->rowStatus == SNMP_ROW_NOTINSERVICE)) {
-                snprintf(&line[strlen(line)], sizeof(line)-strlen(line)-1,
+                snprintf(line, sizeof(line),
                         "targetParams %s %i %i %s %i %i %i\n",
                         curr_struct->paramName, curr_struct->mpModel,
                         curr_struct->secModel, curr_struct->secName,
@@ -648,8 +637,8 @@ var_snmpTargetParamsEntry(struct variable * vp,
      */
     if ((temp_struct = search_snmpTargetParamsTable(vp->name, vp->namelen,
                                                     name, length,
-                                                    exact)) == 0) {
-        return (0);
+                                                    exact)) == NULL) {
+        return NULL;
     }
 
     /*
@@ -665,7 +654,7 @@ var_snmpTargetParamsEntry(struct variable * vp,
          * if unset value, (i.e. new row) 
          */
         if (temp_struct->mpModel == -1)
-            return (0);
+            return NULL;
         long_ret = temp_struct->mpModel;
         return (unsigned char *) &long_ret;
 
@@ -674,7 +663,7 @@ var_snmpTargetParamsEntry(struct variable * vp,
          * if unset value, (i.e. new row) 
          */
         if (temp_struct->secModel == -1)
-            return (0);
+            return NULL;
         long_ret = temp_struct->secModel;
         return (unsigned char *) &long_ret;
 
@@ -682,8 +671,8 @@ var_snmpTargetParamsEntry(struct variable * vp,
         /*
          * if unset value, (i.e. new row) 
          */
-        if (temp_struct->secName == 0)
-            return (0);
+        if (temp_struct->secName == NULL)
+            return NULL;
         /*
          * including null character. 
          */
@@ -697,7 +686,7 @@ var_snmpTargetParamsEntry(struct variable * vp,
          * if unset value, (i.e. new row) 
          */
         if (temp_struct->secLevel == -1)
-            return (0);
+            return NULL;
         long_ret = temp_struct->secLevel;
         return (unsigned char *) &long_ret;
 
@@ -714,7 +703,7 @@ var_snmpTargetParamsEntry(struct variable * vp,
                     "unknown sub-id %d in var_snmpTargetParamsEntry\n",
                     vp->magic));
     }
-    return 0;
+    return NULL;
 }                               /* var_snmpTargetParamsEntry */
 
 /*
@@ -848,7 +837,7 @@ write_snmpTargetParamsSecModel(int action,
         }
         if (find_sec_mod(long_ret) == NULL && long_ret >= 3) {
             DEBUGMSGTL(("snmpTargetParamsEntry",
-                        "write to snmpTargetParamsSecModel: secModel %d unsupported\n",
+                        "write to snmpTargetParamsSecModel: secModel %ld unsupported\n",
                         long_ret));
             return SNMP_ERR_INCONSISTENTVALUE;
         }
@@ -1122,7 +1111,7 @@ write_snmpTargetParamsSecName(int action,
                         "write to snmpTargetParamsSecName: not ASN_OCTET_STR\n"));
             return SNMP_ERR_WRONGTYPE;
         }
-        if (var_val_len > 255 || var_val_len < 0) {
+        if (var_val_len > 255) {
             DEBUGMSGTL(("snmpTargetParamsEntry",
                         "write to snmpTargetParamsSecName: bad length\n"));
             return SNMP_ERR_WRONGLENGTH;
@@ -1279,7 +1268,7 @@ write_snmpTargetParamsRowStatus(int action,
         if (name_len < snmpTargetParamsOIDLen + 1 ||
             name_len > snmpTargetParamsOIDLen + 32) {
             DEBUGMSGTL(("snmpTargetParamsEntry", "bad index length %d\n",
-                        name_len - snmpTargetParamsOIDLen));
+                        (int)(name_len - snmpTargetParamsOIDLen)));
             return SNMP_ERR_NOCREATION;
         }
 
@@ -1372,6 +1361,7 @@ write_snmpTargetParamsRowStatus(int action,
                 update_timestamp(params);
             }
         }
+        snmp_store_needed(NULL);
     } else if (action == UNDO || action == FREE) {
         snmpTargetParamsOID[snmpTargetParamsOIDLen - 1] =
             SNMPTARGETPARAMSROWSTATUSCOLUMN;

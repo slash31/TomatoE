@@ -1,23 +1,29 @@
 #ifndef _SNMPTCPDOMAIN_H
 #define _SNMPTCPDOMAIN_H
 
-#ifdef SNMP_TRANSPORT_TCP_DOMAIN
+#if HAVE_NETINET_IN_H
+#include <netinet/in.h>
+#endif
+
+config_require(IPv4Base)
+config_require(SocketBase)
+config_require(TCPBase)
+
+#ifdef NETSNMP_TRANSPORT_TCP_DOMAIN
+
+#include <net-snmp/library/snmpIPv4BaseDomain.h>
 
 #ifdef __cplusplus
 extern          "C" {
 #endif
 
-#include <net-snmp/library/snmp_transport.h>
-#include <net-snmp/library/asn1.h>
+/*
+ * The SNMP over TCP over IPv4 transport domain is identified by
+ * transportDomainTcpIpv4 as defined in RFC 3419.
+ */
 
-#if HAVE_SYS_SOCKET_H
-#include <sys/socket.h>
-#endif
-#if HAVE_NETINET_IN_H
-#include <netinet/in.h>
-#endif
-
-extern oid netsnmp_snmpTCPDomain[8];	/*  = { 1, 3, 6, 1, 3, 91, 1, 1 };  */
+#define TRANSPORT_DOMAIN_TCP_IP		1,3,6,1,2,1,100,1,5
+NETSNMP_IMPORT oid netsnmp_snmpTCPDomain[];
 
 netsnmp_transport *netsnmp_tcp_transport(struct sockaddr_in *addr, int local);
 
@@ -30,6 +36,6 @@ void            netsnmp_tcp_ctor(void);
 #ifdef __cplusplus
 }
 #endif
-#endif                          /*SNMP_TRANSPORT_TCP_DOMAIN */
+#endif                          /*NETSNMP_TRANSPORT_TCP_DOMAIN */
 
 #endif/*_SNMPTCPDOMAIN_H*/

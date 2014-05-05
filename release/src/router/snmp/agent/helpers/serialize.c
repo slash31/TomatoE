@@ -1,22 +1,13 @@
 #include <net-snmp/net-snmp-config.h>
 
-#if HAVE_STRING_H
-#include <string.h>
-#else
-#include <strings.h>
-#endif
-
 #include <net-snmp/net-snmp-includes.h>
 #include <net-snmp/agent/net-snmp-agent-includes.h>
 
 #include <net-snmp/agent/serialize.h>
 
-#if HAVE_DMALLOC_H
-#include <dmalloc.h>
-#endif
-
-/** @defgroup serialize serialize: Calls sub handlers one request at a time.
- *  @ingroup handler
+/** @defgroup serialize serialize
+ *  Calls sub handlers one request at a time.
+ *  @ingroup utilities
  *  This functionally passes in one request at a time
  *  into lower handlers rather than a whole bunch of requests at once.
  *  This is useful for handlers that don't want to iterate through the
@@ -98,3 +89,5 @@ netsnmp_init_serialize(void)
     netsnmp_register_handler_by_name("serialize",
                                      netsnmp_get_serialize_handler());
 }
+/**  @} */
+

@@ -9,12 +9,6 @@
 #ifndef _MIBGROUP_SNMPTARGETPARAMSENTRY_H
 #define _MIBGROUP_SNMPTARGETPARAMSENTRY_H
 
-/*
- * we use header_generic and checkmib from the util_funcs module 
- */
-
-config_require(util_funcs)
-
     /*
      * Magic number definitions: 
      */
@@ -53,6 +47,7 @@ config_require(util_funcs)
                                               targetParamTable_struct
                                               *newEntry);
      struct targetParamTable_struct *snmpTargetParamTable_create(void);
+     void snmpTargetParamTable_dispose(struct targetParamTable_struct *);
 
 /*
  * function definitions 

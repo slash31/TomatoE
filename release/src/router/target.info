@@ -1,0 +1,21 @@
+Creating little endian 3.0 filesystem on /home/aaronfinney/Documents/TomatoE/release/src-rt/router/mipsel-uclibc/target.image, block size 65536.
+
+Little endian filesystem, data block size 65536, compressed data, compressed metadata, compressed fragments
+Filesystem size 7608.78 Kbytes (7.43 Mbytes)
+	30.45% of uncompressed filesystem size (24987.45 Kbytes)
+Inode table size 9085 bytes (8.87 Kbytes)
+	22.81% of uncompressed inode table size (39824 bytes)
+Directory table size 10321 bytes (10.08 Kbytes)
+	53.92% of uncompressed directory table size (19143 bytes)
+No duplicate files removed
+Number of inodes 1225
+Number of files 985
+Number of fragments 84
+Number of symbolic links  184
+Number of device nodes 0
+Number of fifo nodes 0
+Number of socket nodes 0
+Number of directories 56
+Number of uids 1
+	root (0)
+Number of gids 0

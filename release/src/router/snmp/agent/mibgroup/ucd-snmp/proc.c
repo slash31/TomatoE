@@ -29,11 +29,7 @@
 #include <netinet/in.h>
 #endif
 #if TIME_WITH_SYS_TIME
-# ifdef WIN32
-#  include <sys/timeb.h>
-# else
-#  include <sys/time.h>
-# endif
+# include <sys/time.h>
 # include <time.h>
 #else
 # if HAVE_SYS_TIME_H
@@ -45,19 +41,15 @@
 #if HAVE_KVM_H
 #include <kvm.h>
 #endif
-#if HAVE_WINSOCK_H
-#include <winsock.h>
-#endif
-
-#if HAVE_DMALLOC_H
-#include <dmalloc.h>
-#endif
 
 #include <net-snmp/net-snmp-includes.h>
 #include <net-snmp/agent/net-snmp-agent-includes.h>
 
 #include "struct.h"
 #include "proc.h"
+#ifdef USING_HOST_DATA_ACCESS_SWRUN_MODULE
+#include <net-snmp/data_access/swrun.h>
+#endif
 #ifdef USING_UCD_SNMP_ERRORMIB_MODULE
 #include "errormib.h"
 #else
@@ -80,28 +72,31 @@ init_proc(void)
      * information at 
      */
     struct variable2 extensible_proc_variables[] = {
-        {MIBINDEX, ASN_INTEGER, RONLY, var_extensible_proc, 1, {MIBINDEX}},
-        {ERRORNAME, ASN_OCTET_STR, RONLY, var_extensible_proc, 1,
-         {ERRORNAME}},
-        {PROCMIN, ASN_INTEGER, RONLY, var_extensible_proc, 1, {PROCMIN}},
-        {PROCMAX, ASN_INTEGER, RONLY, var_extensible_proc, 1, {PROCMAX}},
-        {PROCCOUNT, ASN_INTEGER, RONLY, var_extensible_proc, 1,
-         {PROCCOUNT}},
-        {ERRORFLAG, ASN_INTEGER, RONLY, var_extensible_proc, 1,
-         {ERRORFLAG}},
-        {ERRORMSG, ASN_OCTET_STR, RONLY, var_extensible_proc, 1,
-         {ERRORMSG}},
-        {ERRORFIX, ASN_INTEGER, RWRITE, var_extensible_proc, 1,
-         {ERRORFIX}},
-        {ERRORFIXCMD, ASN_OCTET_STR, RONLY, var_extensible_proc, 1,
-         {ERRORFIXCMD}}
+        {MIBINDEX, ASN_INTEGER, NETSNMP_OLDAPI_RONLY,
+         var_extensible_proc, 1, {MIBINDEX}},
+        {ERRORNAME, ASN_OCTET_STR, NETSNMP_OLDAPI_RONLY,
+         var_extensible_proc, 1, {ERRORNAME}},
+        {PROCMIN, ASN_INTEGER, NETSNMP_OLDAPI_RONLY,
+         var_extensible_proc, 1, {PROCMIN}},
+        {PROCMAX, ASN_INTEGER, NETSNMP_OLDAPI_RONLY,
+         var_extensible_proc, 1, {PROCMAX}},
+        {PROCCOUNT, ASN_INTEGER, NETSNMP_OLDAPI_RONLY,
+         var_extensible_proc, 1, {PROCCOUNT}},
+        {ERRORFLAG, ASN_INTEGER, NETSNMP_OLDAPI_RONLY,
+         var_extensible_proc, 1, {ERRORFLAG}},
+        {ERRORMSG, ASN_OCTET_STR, NETSNMP_OLDAPI_RONLY,
+         var_extensible_proc, 1, {ERRORMSG}},
+        {ERRORFIX, ASN_INTEGER, NETSNMP_OLDAPI_RWRITE,
+         var_extensible_proc, 1, {ERRORFIX}},
+        {ERRORFIXCMD, ASN_OCTET_STR, NETSNMP_OLDAPI_RONLY,
+         var_extensible_proc, 1, {ERRORFIXCMD}}
     };
 
     /*
      * Define the OID pointer to the top of the mib tree that we're
      * registering underneath 
      */
-    oid             proc_variables_oid[] = { UCDAVIS_MIB, PROCMIBNUM, 1 };
+    oid             proc_variables_oid[] = { NETSNMP_UCDAVIS_MIB, NETSNMP_PROCMIBNUM, 1 };
 
     /*
      * register ourselves with the agent to handle our mib tree 
@@ -214,11 +209,15 @@ proc_parse_config(const char *token, char *cptr)
         else
             (*procp)->min = 0;
     } else {
+        /* Default to asssume that we require at least one
+         *  such process to be running, but no upper limit */
         (*procp)->max = 0;
-        (*procp)->min = 0;
+        (*procp)->min = 1;
+        /* This frees "proc <procname> 0 0" to monitor
+         * processes that should _not_ be running. */
     }
-#ifdef PROCFIXCMD
-    sprintf((*procp)->fixcmd, PROCFIXCMD, (*procp)->name);
+#ifdef NETSNMP_PROCFIXCMD
+    sprintf((*procp)->fixcmd, NETSNMP_PROCFIXCMD, (*procp)->name);
 #endif
     DEBUGMSGTL(("ucd-snmp/proc", "Read:  %s (%d) (%d)\n",
                 (*procp)->name, (*procp)->max, (*procp)->min));
@@ -265,9 +264,12 @@ var_extensible_proc(struct variable *vp,
         case ERRORFLAG:
             long_ret = sh_count_procs(proc->name);
             if (long_ret >= 0 &&
+                   /* Too few processes running */
                 ((proc->min && long_ret < proc->min) ||
+                   /* Too many processes running */
                  (proc->max && long_ret > proc->max) ||
-                 (proc->min == 0 && proc->max == 0 && long_ret < 1))) {
+                   /* Processes running that shouldn't be */
+                 (proc->min == 0 && proc->max == 0 && long_ret > 0))) {
                 long_ret = 1;
             } else {
                 long_ret = 0;
@@ -278,16 +280,20 @@ var_extensible_proc(struct variable *vp,
             if (long_ret < 0) {
                 errmsg[0] = 0;  /* catch out of mem errors return 0 count */
             } else if (proc->min && long_ret < proc->min) {
-                snprintf(errmsg, sizeof(errmsg),
+                if ( long_ret > 0 )
+                    snprintf(errmsg, sizeof(errmsg),
                         "Too few %s running (# = %d)",
                         proc->name, (int) long_ret);
+                else
+                    snprintf(errmsg, sizeof(errmsg),
+                        "No %s process running", proc->name);
             } else if (proc->max && long_ret > proc->max) {
                 snprintf(errmsg, sizeof(errmsg),
                         "Too many %s running (# = %d)",
                         proc->name, (int) long_ret);
-            } else if (proc->min == 0 && proc->max == 0 && long_ret < 1) {
+            } else if (proc->min == 0 && proc->max == 0 && long_ret > 0) {
                 snprintf(errmsg, sizeof(errmsg),
-                        "No %s process running.", proc->name);
+                        "%s process should not be running.", proc->name);
             } else {
                 errmsg[0] = 0;
             }
@@ -352,6 +358,14 @@ get_proc_instance(struct myproc *proc, oid inst)
     return (proc);
 }
 
+#ifdef USING_HOST_DATA_ACCESS_SWRUN_MODULE
+int
+sh_count_procs(char *procname)
+{
+    return swrun_count_processes_by_name( procname );
+}
+#else
+
 #ifdef bsdi2
 #include <sys/param.h>
 #include <sys/sysctl.h>
@@ -364,8 +378,8 @@ get_proc_instance(struct myproc *proc, oid inst)
  * these are for keeping track of the proc array 
  */
 
-static int      nproc = 0;
-static int      onproc = -1;
+static size_t   nproc = 0;
+static size_t   onproc = -1;
 static struct kinfo_proc *pbase = 0;
 
 int
@@ -403,7 +417,34 @@ sh_count_procs(char *procname)
     return ret;
 }
 
-#elif OSTYPE == LINUXID
+#elif defined(aix4) || defined(aix5) || defined(aix6) || defined(aix7)
+#include <procinfo.h>
+#include <sys/types.h>
+
+struct procsinfo pinfo;
+char pinfo_name[256];
+
+int
+sh_count_procs(char *procname)
+{
+    pid_t index;
+    int count;
+    char *sep;
+    
+    index = 0;
+    count = 0;
+
+    while(getprocs(&pinfo, sizeof(pinfo), NULL, 0, &index, 1) == 1) {
+        strlcpy(pinfo_name, pinfo.pi_comm, sizeof(pinfo_name));
+        sep = strchr(pinfo_name, ' ');
+        if(sep != NULL) *sep = 0;
+        if(strcmp(procname, pinfo_name) == 0) count++;
+    }
+
+    return count;
+}
+
+#elif NETSNMP_OSTYPE == NETSNMP_LINUXID
 
 #include <dirent.h>
 #include <fcntl.h>
@@ -414,11 +455,12 @@ sh_count_procs(char *procname)
 {
     DIR *dir;
     char cmdline[512], *tmpc;
+    char state[64];
     struct dirent *ent;
 #ifdef USE_PROC_CMDLINE
-    int fd,len;
+    int fd;
 #endif
-    int plen=strlen(procname),total = 0;
+    int len,plen=strlen(procname),total = 0;
     FILE *status;
 
     if ((dir = opendir("/proc")) == NULL) return -1;
@@ -427,36 +469,55 @@ sh_count_procs(char *procname)
 #ifdef USE_PROC_CMDLINE  /* old method */
       /* read /proc/XX/cmdline */
       sprintf(cmdline,"/proc/%s/cmdline",ent->d_name);
-      if((fd = open(cmdline, O_RDONLY)) < 0) break;
+      if((fd = open(cmdline, O_RDONLY)) < 0) continue;
       len = read(fd,cmdline,sizeof(cmdline) - 1);
       close(fd);
       if(len <= 0) continue;
       cmdline[len] = 0;
       while(--len && !cmdline[len]);
+      if(len <= 0) continue;
       while(--len) if(!cmdline[len]) cmdline[len] = ' ';
       if(!strncmp(cmdline,procname,plen)) total++;
 #else
       /* read /proc/XX/status */
       sprintf(cmdline,"/proc/%s/status",ent->d_name);
       if ((status = fopen(cmdline, "r")) == NULL)
-          break;
+          continue;
       if (fgets(cmdline, sizeof(cmdline), status) == NULL) {
           fclose(status);
-          break;
+          continue;
+      }
+      /* Grab the state of the process as well
+       * (so we can ignore zombie processes)
+       * XXX: Assumes the second line is the status
+       */
+      if (fgets(state, sizeof(state), status) == NULL) {
+          state[0]='\0';
       }
       fclose(status);
       cmdline[sizeof(cmdline)-1] = '\0';
+      state[sizeof(state)-1] = '\0';
       /* XXX: assumes Name: is first */
       if (strncmp("Name:",cmdline, 5) != 0)
           break;
       tmpc = skip_token(cmdline);
       if (!tmpc)
           break;
+      for (len=0;; len++) {
+	if (tmpc[len] && isgraph(tmpc[len])) continue;
+	tmpc[len]='\0';
+	break;
+      }
       DEBUGMSGTL(("proc","Comparing wanted %s against %s\n",
                   procname, tmpc));
-      if(!strncmp(tmpc,procname,plen)) {
-          total++;
-          DEBUGMSGTL(("proc", " Matched.  total count now=%d\n", total));
+      if(len==plen && !strncmp(tmpc,procname,plen)) {
+          /* Do not count zombie process as they are not running processes */
+          if ( strstr(state, "zombie") == NULL ) {
+              total++;
+              DEBUGMSGTL(("proc", " Matched.  total count now=%d\n", total));
+          } else {
+              DEBUGMSGTL(("proc", " Skipping zombie process.\n"));
+          }
       }
 #endif      
     }
@@ -464,7 +525,7 @@ sh_count_procs(char *procname)
     return total;
 }
 
-#elif OSTYPE == ULTRIXID
+#elif NETSNMP_OSTYPE == NETSNMP_ULTRIXID
 
 #define	NPROCS		32      /* number of proces to read at once */
 
@@ -645,7 +706,7 @@ getstruct(off_t loc, char *name, off_t dest, int size)
         return (0);
     return (1);
 }
-#elif OSTYPE == SOLARISID
+#elif NETSNMP_OSTYPE == NETSNMP_SOLARISID
 
 #ifdef _SLASH_PROC_METHOD_
 
@@ -757,7 +818,7 @@ sh_count_procs(char *procname)
     char            line[STRMAX], *cptr, *cp;
     int             ret = 0, fd;
     FILE           *file;
-#ifndef EXCACHETIME
+#ifndef NETSNMP_EXCACHETIME
 #endif
     struct extensible ex;
     int             slow = strstr(PSCMD, "ax") != NULL;
@@ -788,7 +849,7 @@ sh_count_procs(char *procname)
                 if (*cp == ':')
                     *cp = 0;
             } else {
-                if ((cptr = find_field(line, LASTFIELD)) == NULL)
+                if ((cptr = find_field(line, NETSNMP_LASTFIELD)) == NULL)
                     continue;
                 copy_nword(cptr, line, sizeof(line));
             }
@@ -809,3 +870,4 @@ sh_count_procs(char *procname)
     return (ret);
 }
 #endif
+#endif   /* !USING_HOST_DATA_ACCESS_SWRUN_MODULE */

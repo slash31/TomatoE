@@ -1,8 +1,21 @@
 /*
- * snmp_alarm.c: generic library based alarm timers for various parts
- * of an application 
+ * snmp_alarm.c:
  */
-
+/* Portions of this file are subject to the following copyright(s).  See
+ * the Net-SNMP's COPYING file for more details and other copyrights
+ * that may apply:
+ */
+/*
+ * Portions of this file are copyrighted by:
+ * Copyright © 2003 Sun Microsystems, Inc. All rights reserved.
+ * Use is subject to license terms specified in the COPYING file
+ * distributed with the Net-SNMP package.
+ */
+/** @defgroup snmp_alarm  generic library based alarm timers for various parts of an application 
+ *  @ingroup library
+ * 
+ *  @{
+ */
 #include <net-snmp/net-snmp-config.h>
 
 #if HAVE_UNISTD_H
@@ -16,13 +29,12 @@
 #if HAVE_NETINET_IN_H
 #include <netinet/in.h>
 #endif
+#if HAVE_STRING_H
+#include <string.h>
+#endif
 
 #if TIME_WITH_SYS_TIME
-# ifdef WIN32
-#  include <sys/timeb.h>
-# else
-#  include <sys/time.h>
-# endif
+# include <sys/time.h>
 # include <time.h>
 #else
 # if HAVE_SYS_TIME_H
@@ -30,9 +42,6 @@
 # else
 #  include <time.h>
 # endif
-#endif
-#if HAVE_WINSOCK_H
-#include <winsock.h>
 #endif
 
 #if HAVE_DMALLOC_H
@@ -73,41 +82,29 @@ init_snmp_alarm(void)
 void
 sa_update_entry(struct snmp_alarm *a)
 {
-    if (a->t.tv_sec == 0 && a->t.tv_usec == 0) {
-        DEBUGMSGTL(("snmp_alarm",
-                    "update_entry: illegal interval specified\n"));
-        return;
-    }
-
-    if (a->t_last.tv_sec == 0 && a->t_last.tv_usec == 0) {
+    if (!timerisset(&a->t_last)) {
         struct timeval  t_now;
         /*
          * Never been called yet, call time `t' from now.  
          */
         gettimeofday(&t_now, NULL);
 
-        a->t_last.tv_sec = t_now.tv_sec;
-        a->t_last.tv_usec = t_now.tv_usec;
+        a->t_last = t_now;
 
-        a->t_next.tv_sec = t_now.tv_sec + a->t.tv_sec;
-        a->t_next.tv_usec = t_now.tv_usec + a->t.tv_usec;
-
-        while (a->t_next.tv_usec >= 1000000) {
-            a->t_next.tv_usec -= 1000000;
-            a->t_next.tv_sec += 1;
-        }
-    } else if (a->t_next.tv_sec == 0 && a->t_next.tv_usec == 0) {
+        NETSNMP_TIMERADD(&t_now, &a->t, &a->t_next);
+    } else if (!timerisset(&a->t_next)) {
         /*
          * We've been called but not reset for the next call.  
          */
         if (a->flags & SA_REPEAT) {
-            a->t_next.tv_sec = a->t_last.tv_sec + a->t.tv_sec;
-            a->t_next.tv_usec = a->t_last.tv_usec + a->t.tv_usec;
-
-            while (a->t_next.tv_usec >= 1000000) {
-                a->t_next.tv_usec -= 1000000;
-                a->t_next.tv_sec += 1;
+            if (!timerisset(&a->t)) {
+                DEBUGMSGTL(("snmp_alarm",
+                            "update_entry: illegal interval specified\n"));
+                snmp_alarm_unregister(a->clientreg);
+                return;
             }
+
+            NETSNMP_TIMERADD(&a->t_last, &a->t, &a->t_next);
         } else {
             /*
              * Single time call, remove it.  
@@ -117,6 +114,19 @@ sa_update_entry(struct snmp_alarm *a)
     }
 }
 
+/**
+ * This function removes the callback function from a list of registered
+ * alarms, unregistering the alarm.
+ *
+ * @param clientreg is a unique unsigned integer representing a registered
+ *	alarm which the client wants to unregister.
+ *
+ * @return void
+ *
+ * @see snmp_alarm_register
+ * @see snmp_alarm_register_hr
+ * @see snmp_alarm_unregister_all
+ */
 void
 snmp_alarm_unregister(unsigned int clientreg)
 {
@@ -133,7 +143,7 @@ snmp_alarm_unregister(unsigned int clientreg)
         DEBUGMSGTL(("snmp_alarm", "unregistered alarm %d\n", 
 		    sa_ptr->clientreg));
         /*
-         * Note:  do not free the clientarg, its the clients responsibility 
+         * Note: do not free the clientarg, it's the client's responsibility 
          */
         free(sa_ptr);
     } else {
@@ -141,6 +151,15 @@ snmp_alarm_unregister(unsigned int clientreg)
     }
 }
 
+/**
+ * This function unregisters all alarms currently stored.
+ *
+ * @return void
+ *
+ * @see snmp_alarm_register
+ * @see snmp_alarm_register_hr
+ * @see snmp_alarm_unregister
+ */
 void
 snmp_alarm_unregister_all(void)
 {
@@ -158,21 +177,26 @@ struct snmp_alarm *
 sa_find_next(void)
 {
     struct snmp_alarm *a, *lowest = NULL;
+    struct timeval  t_now;
+
+    gettimeofday(&t_now, NULL);
 
     for (a = thealarms; a != NULL; a = a->next) {
-        if (lowest == NULL) {
-            lowest = a;
-        } else if (a->t_next.tv_sec == lowest->t_next.tv_sec) {
-            if (a->t_next.tv_usec < lowest->t_next.tv_usec) {
-                lowest = a;
+        if (!(a->flags & SA_FIRED)) {
+            /* check for time delta skew */
+            if ((a->t_next.tv_sec - t_now.tv_sec) > a->t.tv_sec) {
+                DEBUGMSGTL(("time_skew", "Time delta too big (%ld seconds), should be %ld seconds - fixing\n",
+		    (long)(a->t_next.tv_sec - t_now.tv_sec), (long)a->t.tv_sec));
+                NETSNMP_TIMERADD(&t_now, &a->t, &a->t_next);
             }
-        } else if (a->t_next.tv_sec < lowest->t_next.tv_sec) {
-            lowest = a;
-        }
+            if (lowest == NULL || timercmp(&a->t_next, &lowest->t_next, <))
+                lowest = a;
+       }
     }
     return lowest;
 }
 
+NETSNMP_IMPORT struct snmp_alarm *sa_find_specific(unsigned int clientreg);
 struct snmp_alarm *
 sa_find_specific(unsigned int clientreg)
 {
@@ -205,19 +229,17 @@ run_alarms(void)
 
         gettimeofday(&t_now, NULL);
 
-        if ((a->t_next.tv_sec < t_now.tv_sec) ||
-            ((a->t_next.tv_sec == t_now.tv_sec) &&
-             (a->t_next.tv_usec < t_now.tv_usec))) {
+        if (timercmp(&a->t_next, &t_now, <)) {
             clientreg = a->clientreg;
+            a->flags |= SA_FIRED;
             DEBUGMSGTL(("snmp_alarm", "run alarm %d\n", clientreg));
             (*(a->thecallback)) (clientreg, a->clientarg);
             DEBUGMSGTL(("snmp_alarm", "alarm %d completed\n", clientreg));
 
             if ((a = sa_find_specific(clientreg)) != NULL) {
-                a->t_last.tv_sec = t_now.tv_sec;
-                a->t_last.tv_usec = t_now.tv_usec;
-                a->t_next.tv_sec = 0;
-                a->t_next.tv_usec = 0;
+                a->t_last = t_now;
+                timerclear(&a->t_next);
+                a->flags &= ~SA_FIRED;
                 sa_update_entry(a);
             } else {
                 DEBUGMSGTL(("snmp_alarm", "alarm %d deleted itself\n",
@@ -240,49 +262,56 @@ alarm_handler(int a)
 
 
 
+/**
+ * Look up the time at which the next alarm will fire.
+ *
+ * @param[out] alarm_tm Time at which the next alarm will fire.
+ * @param[in] now Earliest time that should be written into *alarm_tm.
+ *
+ * @return Zero if no alarms are scheduled; non-zero 'clientreg' value
+ *   identifying the first alarm that will fire if one or more alarms are
+ *   scheduled.
+ */
 int
-get_next_alarm_delay_time(struct timeval *delta)
+netsnmp_get_next_alarm_time(struct timeval *alarm_tm, const struct timeval *now)
 {
     struct snmp_alarm *sa_ptr;
-    struct timeval  t_diff, t_now;
 
     sa_ptr = sa_find_next();
 
     if (sa_ptr) {
-        gettimeofday(&t_now, 0);
-
-        if ((t_now.tv_sec > sa_ptr->t_next.tv_sec) ||
-            ((t_now.tv_sec == sa_ptr->t_next.tv_sec) &&
-             (t_now.tv_usec > sa_ptr->t_next.tv_usec))) {
-            /*
-             * Time has already passed.  Return the smallest possible amount of
-             * time.  
-             */
-            delta->tv_sec = 0;
-            delta->tv_usec = 1;
-            return sa_ptr->clientreg;
-        } else {
-            /*
-             * Time is still in the future.  
-             */
-            t_diff.tv_sec = sa_ptr->t_next.tv_sec - t_now.tv_sec;
-            t_diff.tv_usec = sa_ptr->t_next.tv_usec - t_now.tv_usec;
-
-            while (t_diff.tv_usec < 0) {
-                t_diff.tv_sec -= 1;
-                t_diff.tv_usec += 1000000;
-            }
-
-            delta->tv_sec = t_diff.tv_sec;
-            delta->tv_usec = t_diff.tv_usec;
-            return sa_ptr->clientreg;
-        }
+        netsnmp_assert(alarm_tm);
+        netsnmp_assert(timerisset(&sa_ptr->t_next));
+        if (timercmp(&sa_ptr->t_next, now, >))
+            *alarm_tm = sa_ptr->t_next;
+        else
+            *alarm_tm = *now;
+        return sa_ptr->clientreg;
+    } else {
+        return 0;
     }
+}
 
-    /*
-     * Nothing Left.  
-     */
-    return 0;
+/**
+ * Get the time until the next alarm will fire.
+ *
+ * @param[out] delta Time until the next alarm.
+ *
+ * @return Zero if no alarms are scheduled; non-zero 'clientreg' value
+ *   identifying the first alarm that will fire if one or more alarms are
+ *   scheduled.
+ */
+int
+get_next_alarm_delay_time(struct timeval *delta)
+{
+    struct timeval t_now, alarm_tm;
+    int res;
+
+    gettimeofday(&t_now, NULL);
+    res = netsnmp_get_next_alarm_time(&alarm_tm, &t_now);
+    if (res)
+        NETSNMP_TIMERSUB(&alarm_tm, &t_now, delta);
+    return res;
 }
 
 
@@ -304,21 +333,19 @@ set_an_alarm(void)
 # ifdef HAVE_SETITIMER
         struct itimerval it;
 
-        it.it_value.tv_sec = delta.tv_sec;
-        it.it_value.tv_usec = delta.tv_usec;
-        it.it_interval.tv_sec = 0;
-        it.it_interval.tv_usec = 0;
+        it.it_value = delta;
+        timerclear(&it.it_interval);
 
         signal(SIGALRM, alarm_handler);
         setitimer(ITIMER_REAL, &it, NULL);
-        DEBUGMSGTL(("snmp_alarm", "schedule alarm %d in %d.%03d seconds\n",
+        DEBUGMSGTL(("snmp_alarm", "schedule alarm %d in %ld.%03ld seconds\n",
                     nextalarm, delta.tv_sec, (delta.tv_usec / 1000)));
 # else  /* HAVE_SETITIMER */
 #  ifdef SIGALRM
         signal(SIGALRM, alarm_handler);
         alarm(delta.tv_sec);
         DEBUGMSGTL(("snmp_alarm",
-                    "schedule alarm %d in roughly %d seconds\n", nextalarm,
+                    "schedule alarm %d in roughly %ld seconds\n", nextalarm,
                     delta.tv_sec));
 #  endif  /* SIGALRM */
 # endif  /* HAVE_SETITIMER */
@@ -330,44 +357,91 @@ set_an_alarm(void)
 }
 
 
-
+/**
+ * This function registers function callbacks to occur at a specific time
+ * in the future.
+ *
+ * @param when is an unsigned integer specifying when the callback function
+ *             will be called in seconds.
+ *
+ * @param flags is an unsigned integer that specifies how frequent the callback
+ *	function is called in seconds.  Should be SA_REPEAT or 0.  If  
+ *	flags  is  set with SA_REPEAT, then the registered callback function
+ *	will be called every SA_REPEAT seconds.  If flags is 0 then the 
+ *	function will only be called once and then removed from the 
+ *	registered alarm list.
+ *
+ * @param thecallback is a pointer SNMPAlarmCallback which is the callback 
+ *	function being stored and registered.
+ *
+ * @param clientarg is a void pointer used by the callback function.  This 
+ *	pointer is assigned to snmp_alarm->clientarg and passed into the
+ *	callback function for the client's specific needs.
+ *
+ * @return Returns a unique unsigned integer(which is also passed as the first 
+ *	argument of each callback), which can then be used to remove the
+ *	callback from the list at a later point in the future using the
+ *	snmp_alarm_unregister() function.  If memory could not be allocated
+ *	for the snmp_alarm struct 0 is returned.
+ *
+ * @see snmp_alarm_unregister
+ * @see snmp_alarm_register_hr
+ * @see snmp_alarm_unregister_all
+ */
 unsigned int
 snmp_alarm_register(unsigned int when, unsigned int flags,
                     SNMPAlarmCallback * thecallback, void *clientarg)
 {
-    struct snmp_alarm **sa_pptr;
-    if (thealarms != NULL) {
-        for (sa_pptr = &thealarms; (*sa_pptr) != NULL;
-             sa_pptr = &((*sa_pptr)->next));
+    struct timeval  t;
+
+    if (0 == when) {
+        t.tv_sec = 0;
+        t.tv_usec = 1;
     } else {
-        sa_pptr = &thealarms;
+        t.tv_sec = when;
+        t.tv_usec = 0;
     }
 
-    *sa_pptr = SNMP_MALLOC_STRUCT(snmp_alarm);
-    if (*sa_pptr == NULL)
-        return 0;
-
-    (*sa_pptr)->t.tv_sec = when;
-    (*sa_pptr)->t.tv_usec = 0;
-    (*sa_pptr)->flags = flags;
-    (*sa_pptr)->clientarg = clientarg;
-    (*sa_pptr)->thecallback = thecallback;
-    (*sa_pptr)->clientreg = regnum++;
-    (*sa_pptr)->next = NULL;
-    sa_update_entry(*sa_pptr);
-
-    DEBUGMSGTL(("snmp_alarm",
-		"registered alarm %d, t = %d.%03d, flags=0x%02x\n",
-                (*sa_pptr)->clientreg, (*sa_pptr)->t.tv_sec,
-                ((*sa_pptr)->t.tv_usec / 1000), (*sa_pptr)->flags));
-
-    if (start_alarms)
-        set_an_alarm();
-    return (*sa_pptr)->clientreg;
+    return snmp_alarm_register_hr(t, flags, thecallback, clientarg);
 }
 
 
-
+/**
+ * This function offers finer granularity as to when the callback 
+ * function is called by making use of t->tv_usec value forming the 
+ * "when" aspect of snmp_alarm_register().
+ *
+ * @param t is a timeval structure used to specify when the callback 
+ *	function(alarm) will be called.  Adds the ability to specify
+ *	microseconds.  t.tv_sec and t.tv_usec are assigned
+ *	to snmp_alarm->tv_sec and snmp_alarm->tv_usec respectively internally.
+ *	The snmp_alarm_register function only assigns seconds(it's when 
+ *	argument).
+ *
+ * @param flags is an unsigned integer that specifies how frequent the callback
+ *	function is called in seconds.  Should be SA_REPEAT or NULL.  If  
+ *	flags  is  set with SA_REPEAT, then the registered callback function
+ *	will be called every SA_REPEAT seconds.  If flags is NULL then the 
+ *	function will only be called once and then removed from the 
+ *	registered alarm list.
+ *
+ * @param cb is a pointer SNMPAlarmCallback which is the callback 
+ *	function being stored and registered.
+ *
+ * @param cd is a void pointer used by the callback function.  This 
+ *	pointer is assigned to snmp_alarm->clientarg and passed into the
+ *	callback function for the client's specific needs.
+ *
+ * @return Returns a unique unsigned integer(which is also passed as the first 
+ *	argument of each callback), which can then be used to remove the
+ *	callback from the list at a later point in the future using the
+ *	snmp_alarm_unregister() function.  If memory could not be allocated
+ *	for the snmp_alarm struct 0 is returned.
+ *
+ * @see snmp_alarm_register
+ * @see snmp_alarm_unregister
+ * @see snmp_alarm_unregister_all
+ */
 unsigned int
 snmp_alarm_register_hr(struct timeval t, unsigned int flags,
                        SNMPAlarmCallback * cb, void *cd)
@@ -381,8 +455,7 @@ snmp_alarm_register_hr(struct timeval t, unsigned int flags,
         return 0;
     }
 
-    (*s)->t.tv_sec = t.tv_sec;
-    (*s)->t.tv_usec = t.tv_usec;
+    (*s)->t = t;
     (*s)->flags = flags;
     (*s)->clientarg = cd;
     (*s)->thecallback = cb;
@@ -392,7 +465,7 @@ snmp_alarm_register_hr(struct timeval t, unsigned int flags,
     sa_update_entry(*s);
 
     DEBUGMSGTL(("snmp_alarm",
-                "registered alarm %d, t = %d.%03d, flags=0x%02x\n",
+                "registered alarm %d, t = %ld.%03ld, flags=0x%02x\n",
                 (*s)->clientreg, (*s)->t.tv_sec, ((*s)->t.tv_usec / 1000),
                 (*s)->flags));
 
@@ -402,3 +475,4 @@ snmp_alarm_register_hr(struct timeval t, unsigned int flags,
 
     return (*s)->clientreg;
 }
+/**  @} */

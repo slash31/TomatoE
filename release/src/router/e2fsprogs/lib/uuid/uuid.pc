@@ -1,0 +1,11 @@
+prefix=/home/aaronfinney/Documents/TomatoE/release/src-rt/router/e2fsprogs/staged
+exec_prefix=${prefix}
+libdir=${exec_prefix}/lib
+includedir=${prefix}/include
+
+Name: uuid
+Description: Universally unique id library
+Version: 1.41.9
+Requires: 
+Cflags: -I${includedir}/uuid
+Libs: -L${libdir} -luuid

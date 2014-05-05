@@ -1,8 +1,18 @@
 #include "sysv.h"
 
+#undef hpux
+#define hpux hpux
+
 #ifdef hpux11
-#define DONT_USE_NLIST 1
+#define NETSNMP_DONT_USE_NLIST 1
 #endif
+
+/* 
+ * HP-UX needs _REENTRANT defined to pick up strtok_r.
+ * Otherwise, at least for 64-bit code, strtok_r will not work 
+ * and will make net-snmp segfault.
+ */
+#define _REENTRANT 1
 
 #undef TCP_TTL_SYMBOL
 #ifndef hpux11
@@ -62,4 +72,23 @@
 
 #define rt_pad1 rt_refcnt
 
-#define hpux 1
+/*
+ * disable inline for non-gcc compiler
+ */
+#ifndef __GNUC__
+#  undef NETSNMP_ENABLE_INLINE
+#  define NETSNMP_ENABLE_INLINE 0
+#endif
+
+/*
+ * prevent sigaction being redefined to cma_sigaction
+ * (causing build errors on HP-UX 10.20, at least)
+ */
+#ifdef hpux10
+#ifndef _CMA_NOWRAPPERS_
+#  define _CMA_NOWRAPPERS_ 1
+#endif
+#endif
+
+/* define the extra mib modules that are supported */
+#define NETSNMP_INCLUDE_HOST_RESOURCES

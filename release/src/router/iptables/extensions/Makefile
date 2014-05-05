@@ -9,12 +9,12 @@
 #PF6_EXT_SLIB:=connmark eui64 hl icmp6 length limit mac mark multiport owner physdev policy standard state tcp udp CONNMARK HL LOG NFQUEUE MARK TRACE
 
 
-PF_EXT_SLIB:=CLASSIFY CONNMARK DNAT DSCP LOG MARK MASQUERADE REDIRECT REJECT
+PF_EXT_SLIB:=CLASSIFY CONNMARK DNAT DSCP LOG MARK MASQUERADE REDIRECT REJECT 
 PF_EXT_SLIB+=ROUTE SNAT TCPMSS TOS TRIGGER TTL NETMAP
 PF_EXT_SLIB+=condition connlimit connmark geoip icmp iprange layer7
 PF_EXT_SLIB+=length limit mac mark multiport recent standard state quota
 PF_EXT_SLIB+=tcp tcpmss time tos u32 udp dscp connbytes webmon string
-PF_EXT_SLIB+=IMQ ipp2p
+PF_EXT_SLIB+=IMQ ipp2p ULOG
 ifeq ($(CONFIG_LINUX26),y)
 PF_EXT_SLIB+=policy
 PF_EXT_SLIB+=hashlimit NFQUEUE NOTRACK

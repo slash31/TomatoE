@@ -17,20 +17,20 @@
 extern          "C" {
 #endif
 
-#ifdef NS_REENTRANT
+#ifdef NETSNMP_REENTRANT
 
 static mutex_type s_res[MT_MAX_IDS][MT_LIB_MAXIMUM];  /* locking structures */
 
 static mutex_type *
 _mt_res(int groupID, int resourceID)
 {
-    if (groupID < 1) {
+    if (groupID < 0) {
 	return 0;
     }
     if (groupID >= MT_MAX_IDS) {
 	return 0;
     }
-    if (resourceID < 1) {
+    if (resourceID < 0) {
 	return 0;
     }
     if (resourceID >= MT_LIB_MAXIMUM) {
@@ -127,7 +127,7 @@ snmp_res_unlock(int groupID, int resourceID)
     return rc;
 }
 
-#else  /*  NS_REENTRANT  */
+#else  /*  NETSNMP_REENTRANT  */
 #ifdef WIN32
 
 /*
@@ -158,8 +158,8 @@ snmp_res_destroy_mutex(int groupID, int resourceID)
     return 0;
 }
 #endif /*  WIN32  */
-#endif /*  NS_REENTRANT  */
+#endif /*  NETSNMP_REENTRANT  */
 
 #ifdef __cplusplus
-};
+}
 #endif

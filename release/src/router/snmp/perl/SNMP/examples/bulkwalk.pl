@@ -1,8 +1,3 @@
-#!/usr/local/bin/perl
-#
-# $Id: bulkwalk.pl,v 1.1.2.1 2004/06/20 21:54:58 nikki Exp $
-#
-
 use SNMP;
 
 # Hard-coded hostname and community.  This is icky, but I didn't want to 

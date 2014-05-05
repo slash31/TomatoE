@@ -1,7 +1,18 @@
 /*
  * snmp_vars.c - return a pointer to the named variable.
+ */
+/**
+ * @addtogroup library
  *
- *
+ * @{
+ */
+/* Portions of this file are subject to the following copyright(s).  See
+ * the Net-SNMP's COPYING file for more details and other copyrights
+ * that may apply:
+ */
+/* Portions of this file are subject to the following copyright(s).  See
+ * the Net-SNMP's COPYING file for more details and other copyrights
+ * that may apply:
  */
 /***********************************************************
 	Copyright 1988, 1989, 1990 by Carnegie Mellon University
@@ -26,10 +37,23 @@ OTHER TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR
 PERFORMANCE OF THIS SOFTWARE.
 ******************************************************************/
 /*
+ * Portions of this file are copyrighted by:
+ * Copyright © 2003 Sun Microsystems, Inc. All rights reserved.
+ * Use is subject to license terms specified in the COPYING file
+ * distributed with the Net-SNMP package.
+ */
+
+/*
  * additions, fixes and enhancements for Linux by Erik Schoenfelder
  * (schoenfr@ibr.cs.tu-bs.de) 1994/1995.
  * Linux additions taken from CMU to UCD stack by Jennifer Bray of Origin
  * (jbray@origin-at.co.uk) 1997
+ */
+/*
+ * Portions of this file are copyrighted by:
+ * Copyright © 2003 Sun Microsystems, Inc. All rights reserved.
+ * Use is subject to license terms specified in the COPYING file
+ * distributed with the Net-SNMP package.
  */
 
 /*
@@ -38,6 +62,9 @@ PERFORMANCE OF THIS SOFTWARE.
  */
 
 #include <net-snmp/net-snmp-config.h>
+#if HAVE_SYS_PARAM_H
+#include <sys/param.h>
+#endif
 #if HAVE_STRING_H
 #include <string.h>
 #endif
@@ -47,13 +74,10 @@ PERFORMANCE OF THIS SOFTWARE.
 #include <sys/types.h>
 #include <stdio.h>
 #include <fcntl.h>
+#include <errno.h>
 
 #if TIME_WITH_SYS_TIME
-# ifdef WIN32
-#  include <sys/timeb.h>
-# else
-#  include <sys/time.h>
-# endif
+# include <sys/time.h>
 # include <time.h>
 #else
 # if HAVE_SYS_TIME_H
@@ -62,13 +86,13 @@ PERFORMANCE OF THIS SOFTWARE.
 #  include <time.h>
 # endif
 #endif
-#if HAVE_WINSOCK_H
-# include <winsock.h>
-#endif
 #if HAVE_SYS_SOCKET_H
 # include <sys/socket.h>
 #endif
 #if HAVE_SYS_STREAM_H
+#   ifdef sysv5UnixWare7
+#      define _KMEMUSER 1 /* <sys/stream.h> needs this for queue_t */
+#   endif
 #include <sys/stream.h>
 #endif
 #if HAVE_SYS_SOCKETVAR_H
@@ -83,7 +107,7 @@ PERFORMANCE OF THIS SOFTWARE.
 #if HAVE_NETINET_IP_H
 #include <netinet/ip.h>
 #endif
-#ifdef INET6
+#ifdef NETSNMP_ENABLE_IPV6
 #if HAVE_NETINET_IP6_H
 #include <netinet/ip6.h>
 #endif
@@ -97,8 +121,8 @@ PERFORMANCE OF THIS SOFTWARE.
 #if HAVE_NETINET_IP_VAR_H
 #include <netinet/ip_var.h>
 #endif
-#ifdef INET6
-#if HAVE_NETINET6_IP6_VAR_H
+#ifdef NETSNMP_ENABLE_IPV6
+#if HAVE_NETNETSNMP_ENABLE_IPV6_IP6_VAR_H
 #include <netinet6/ip6_var.h>
 #endif
 #endif
@@ -109,23 +133,37 @@ PERFORMANCE OF THIS SOFTWARE.
 #include <inet/mib2.h>
 #endif
 
-#if HAVE_DMALLOC_H
-#include <dmalloc.h>
-#endif
-
 #include <net-snmp/net-snmp-includes.h>
 #include <net-snmp/agent/net-snmp-agent-includes.h>
+#include <net-snmp/agent/mib_modules.h>
+#include <net-snmp/agent/agent_sysORTable.h>
 #include "kernel.h"
 
 #include "mibgroup/struct.h"
 #include "snmpd.h"
+#include "agentx/agentx_config.h"
+#include "agentx/subagent.h"
 #include "net-snmp/agent/all_helpers.h"
+#include "agent_module_includes.h"
 #include "mib_module_includes.h"
 #include "net-snmp/library/container.h"
+
+#if defined(NETSNMP_USE_OPENSSL) && defined(HAVE_LIBSSL)
+#include <openssl/ssl.h>
+#include <openssl/x509v3.h>
+#include <net-snmp/library/cert_util.h>
+#endif
+
+#include "snmp_perl.h"
 
 #ifndef  MIN
 #define  MIN(a,b)                     (((a) < (b)) ? (a) : (b))
 #endif
+
+static char     done_init_agent = 0;
+
+struct module_init_list *initlist = NULL;
+struct module_init_list *noinitlist = NULL;
 
 /*
  * mib clients are passed a pointer to a oid buffer.  Some mib clients
@@ -199,24 +237,54 @@ u_char          return_buf[258];
 u_char          return_buf[256];        /* nee 64 */
 #endif
 
-struct timeval  starttime;
-netsnmp_session *callback_master_sess;
-int             callback_master_num;
+int             callback_master_num = -1;
 
-/*
- * init_agent() returns non-zero on error 
+#ifdef NETSNMP_TRANSPORT_CALLBACK_DOMAIN
+netsnmp_session *callback_master_sess = NULL;
+
+static void
+_init_agent_callback_transport(void)
+{
+    /*
+     * always register a callback transport for internal use 
+     */
+    callback_master_sess = netsnmp_callback_open(0, handle_snmp_packet,
+                                                 netsnmp_agent_check_packet,
+                                                 netsnmp_agent_check_parse);
+    if (callback_master_sess)
+        callback_master_num = callback_master_sess->local_port;
+}
+#else
+#define _init_agent_callback_transport()
+#endif
+
+/**
+ * Initialize the agent.  Calls into init_agent_read_config to set tha app's
+ * configuration file in the appropriate default storage space,
+ *  NETSNMP_DS_LIB_APPTYPE.  Need to call init_agent before calling init_snmp.
+ *
+ * @param app the configuration file to be read in, gets stored in default
+ *        storage
+ *
+ * @return Returns non-zero on failure and zero on success.
+ *
+ * @see init_snmp
  */
 int
 init_agent(const char *app)
 {
     int             r = 0;
 
+    if(++done_init_agent > 1) {
+        snmp_log(LOG_WARNING, "ignoring extra call to init_agent (%d)\n", 
+                 done_init_agent);
+        return r;
+    }
+
     /*
      * get current time (ie, the time the agent started) 
      */
-    gettimeofday(&starttime, NULL);
-    starttime.tv_sec--;
-    starttime.tv_usec += 1000000L;
+    netsnmp_set_agent_starttime(NULL);
 
     /*
      * we handle alarm signals ourselves in the select loop 
@@ -224,8 +292,8 @@ init_agent(const char *app)
     netsnmp_ds_set_boolean(NETSNMP_DS_LIBRARY_ID, 
 			   NETSNMP_DS_LIB_ALARM_DONT_USE_SIG, 1);
 
-#ifdef CAN_USE_NLIST
-    init_kmem("/dev/kmem");
+#ifdef NETSNMP_CAN_USE_NLIST
+    r = init_kmem("/dev/kmem") ? 0 : -EACCES;
 #endif
 
     setup_tree();
@@ -236,54 +304,160 @@ init_agent(const char *app)
     auto_nlist_print_tree(-2, 0);
 #endif
 
-#ifndef WIN32
-	/*
-	 * the pipe call creates fds that select chokes on, so
-	 * disable callbacks on WIN32 until a fix can be found
-	 */
-    /*
-     * always register a callback transport for internal use 
-     */
-    callback_master_sess = netsnmp_callback_open(0, handle_snmp_packet,
-                                                 netsnmp_agent_check_packet,
-                                                 netsnmp_agent_check_parse);
-    if (callback_master_sess)
-        callback_master_num = callback_master_sess->local_port;
-    else
-#endif
-        callback_master_num = -1;
-
+    _init_agent_callback_transport();
+    
     netsnmp_init_helpers();
     init_traps();
     netsnmp_container_init_list();
+    init_agent_sysORTable();
 
+#if defined(USING_AGENTX_SUBAGENT_MODULE) || defined(USING_AGENTX_MASTER_MODULE)
     /*
-     * initialize agentx subagent if necessary. 
+     * initialize agentx configs
      */
-#ifdef USING_AGENTX_SUBAGENT_MODULE
-    if (netsnmp_ds_get_boolean(NETSNMP_DS_APPLICATION_ID, 
-			       NETSNMP_DS_AGENT_ROLE) == SUB_AGENT) {
-        r = subagent_pre_init();
-        init_subagent();
-    }
+    agentx_config_init();
+#if defined(USING_AGENTX_SUBAGENT_MODULE)
+    if(netsnmp_ds_get_boolean(NETSNMP_DS_APPLICATION_ID,
+                              NETSNMP_DS_AGENT_ROLE) == SUB_AGENT)
+        subagent_init();
+#endif
 #endif
 
     /*
      * Register configuration tokens from transport modules.  
      */
-#ifdef SNMP_TRANSPORT_UDP_DOMAIN
+#ifdef NETSNMP_TRANSPORT_UDP_DOMAIN
     netsnmp_udp_agent_config_tokens_register();
 #endif
-#ifdef SNMP_TRANSPORT_UDPIPV6_DOMAIN
+#ifdef NETSNMP_TRANSPORT_UDPIPV6_DOMAIN
     netsnmp_udp6_agent_config_tokens_register();
+#endif
+#ifdef NETSNMP_TRANSPORT_UNIX_DOMAIN
+    netsnmp_unix_agent_config_tokens_register();
 #endif
 
 #ifdef NETSNMP_EMBEDDED_PERL
     init_perl();
 #endif
 
+#if defined(NETSNMP_USE_OPENSSL) && defined(HAVE_LIBSSL)
+    /** init secname mapping */
+    netsnmp_certs_agent_init();
+#endif
+
+#ifdef USING_AGENTX_SUBAGENT_MODULE
+    /*
+     * don't init agent modules for a sub-agent
+     */
+    if (netsnmp_ds_get_boolean(NETSNMP_DS_APPLICATION_ID, 
+			       NETSNMP_DS_AGENT_ROLE) == SUB_AGENT)
+        return r;
+#endif
+
+#  include "agent_module_inits.h"
+
     return r;
 }                               /* end init_agent() */
 
 oid             nullOid[] = { 0, 0 };
 int             nullOidLen = sizeof(nullOid);
+
+void
+shutdown_agent(void) {
+
+    /* probably some of this can be called as shutdown callback */
+    shutdown_tree();
+    clear_context();
+    netsnmp_clear_callback_list();
+    netsnmp_clear_tdomain_list();
+    netsnmp_clear_handler_list();
+    shutdown_agent_sysORTable();
+    netsnmp_container_free_list();
+    clear_sec_mod();
+    clear_snmp_enum();
+    clear_callback();
+    clear_user_list();
+    netsnmp_addrcache_destroy();
+#ifdef NETSNMP_CAN_USE_NLIST
+    free_kmem();
+#endif
+
+    done_init_agent = 0;
+}
+
+
+void
+add_to_init_list(char *module_list)
+{
+    struct module_init_list *newitem, **list;
+    char           *cp;
+    char           *st;
+
+    if (module_list == NULL) {
+        return;
+    } else {
+        cp = (char *) module_list;
+    }
+
+    if (*cp == '-' || *cp == '!') {
+        cp++;
+        list = &noinitlist;
+    } else {
+        list = &initlist;
+    }
+
+    cp = strtok_r(cp, ", :", &st);
+    while (cp) {
+        newitem = (struct module_init_list *) calloc(1, sizeof(*initlist));
+        newitem->module_name = strdup(cp);
+        newitem->next = *list;
+        *list = newitem;
+        cp = strtok_r(NULL, ", :", &st);
+    }
+}
+
+int
+should_init(const char *module_name)
+{
+    struct module_init_list *listp;
+
+    /*
+     * a definitive list takes priority 
+     */
+    if (initlist) {
+        listp = initlist;
+        while (listp) {
+            if (strcmp(listp->module_name, module_name) == 0) {
+                DEBUGMSGTL(("mib_init", "initializing: %s\n",
+                            module_name));
+                return DO_INITIALIZE;
+            }
+            listp = listp->next;
+        }
+        DEBUGMSGTL(("mib_init", "skipping:     %s\n", module_name));
+        return DONT_INITIALIZE;
+    }
+
+    /*
+     * initialize it only if not on the bad list (bad module, no bone) 
+     */
+    if (noinitlist) {
+        listp = noinitlist;
+        while (listp) {
+            if (strcmp(listp->module_name, module_name) == 0) {
+                DEBUGMSGTL(("mib_init", "skipping:     %s\n",
+                            module_name));
+                return DONT_INITIALIZE;
+            }
+            listp = listp->next;
+        }
+    }
+    DEBUGMSGTL(("mib_init", "initializing: %s\n", module_name));
+
+    /*
+     * initialize it 
+     */
+    return DO_INITIALIZE;
+}
+/**  @} */
+

@@ -1,0 +1,12 @@
+TOMATO_N = 1
+PROFILE_G = 1
+PROFILE_N = 2
+TOMATO_PROFILE = $(PROFILE_N)
+TOMATO_PROFILE_NAME = "N"
+TOMATO_BUILD = "E"
+TOMATO_BUILD_NAME = "E"
+TOMATO_BUILD_DESC = "VPN"
+TOMATO_PROFILE_L = n
+TOMATO_PROFILE_U = N
+TOMATO_BUILD_USB = "USB"
+export EXTRACFLAGS := -fno-delete-null-pointer-checks -DBCMWPA2 -funit-at-a-time -Wno-pointer-sign -mtune=mips32 -mips32  

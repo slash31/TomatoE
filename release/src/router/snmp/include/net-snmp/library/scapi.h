@@ -20,24 +20,22 @@ extern          "C" {
 #define SNMP_TRANS_PRIVLEN_1DES		64
 #define SNMP_TRANS_PRIVLEN_1DES_IV	64
 
-#define SNMP_TRANS_PRIVLEN_AES128	128
-#define SNMP_TRANS_PRIVLEN_AES128_IV	128
-#define SNMP_TRANS_AES_AES128_PADSIZE   128
-
-#define SNMP_TRANS_PRIVLEN_AES192	192
-#define SNMP_TRANS_PRIVLEN_AES192_IV	192
-#define SNMP_TRANS_AES_AES192_PADSIZE   128
-
-#define SNMP_TRANS_PRIVLEN_AES256	256
-#define SNMP_TRANS_PRIVLEN_AES256_IV	256
-#define SNMP_TRANS_AES_AES256_PADSIZE   128
+#define SNMP_TRANS_PRIVLEN_AES		128
+#define SNMP_TRANS_PRIVLEN_AES_IV	128
+#define SNMP_TRANS_AES_PADSIZE	   	128  /* backwards compat */
+#define SNMP_TRANS_PRIVLEN_AES128	128  /* backwards compat */
+#define SNMP_TRANS_PRIVLEN_AES128_IV	128  /* backwards compat */
+#define SNMP_TRANS_AES_AES128_PADSIZE   128  /* backwards compat */
 
     /*
      * Prototypes.
      */
     int             sc_get_properlength(const oid * hashtype,
                                         u_int hashtype_len);
+    int             sc_get_proper_priv_length(const oid * privtype,
+                                              u_int privtype_len);
 
+    NETSNMP_IMPORT
     int             sc_init(void);
     int             sc_shutdown(int majorID, int minorID, void *serverarg,
                                 void *clientarg);
@@ -46,20 +44,20 @@ extern          "C" {
 
     int             sc_generate_keyed_hash(const oid * authtype,
                                            size_t authtypelen,
-                                           u_char * key, u_int keylen,
-                                           u_char * message, u_int msglen,
+                                           const u_char * key, u_int keylen,
+                                           const u_char * message, u_int msglen,
                                            u_char * MAC, size_t * maclen);
 
     int             sc_check_keyed_hash(const oid * authtype,
-                                        size_t authtypelen, u_char * key,
-                                        u_int keylen, u_char * message,
-                                        u_int msglen, u_char * MAC,
+                                        size_t authtypelen, const u_char * key,
+                                        u_int keylen, const u_char * message,
+                                        u_int msglen, const u_char * MAC,
                                         u_int maclen);
 
     int             sc_encrypt(const oid * privtype, size_t privtypelen,
                                u_char * key, u_int keylen,
                                u_char * iv, u_int ivlen,
-                               u_char * plaintext, u_int ptlen,
+                               const u_char * plaintext, u_int ptlen,
                                u_char * ciphertext, size_t * ctlen);
 
     int             sc_decrypt(const oid * privtype, size_t privtypelen,
@@ -69,7 +67,7 @@ extern          "C" {
                                u_char * plaintext, size_t * ptlen);
 
     int             sc_hash(const oid * hashtype, size_t hashtypelen,
-                            u_char * buf, size_t buf_len,
+                            const u_char * buf, size_t buf_len,
                             u_char * MAC, size_t * MAC_len);
 
     int             sc_get_transform_type(oid * hashtype,
@@ -99,7 +97,7 @@ extern          "C" {
     /*
      * define a transform type if we're using the internal md5 support 
      */
-#ifdef USE_INTERNAL_MD5
+#ifdef NETSNMP_USE_INTERNAL_MD5
 #define INTERNAL_MD5 1
 #endif
 

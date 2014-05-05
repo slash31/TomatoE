@@ -41,11 +41,7 @@ SOFTWARE.
 # include <netinet/in.h>
 #endif
 #if TIME_WITH_SYS_TIME
-# ifdef WIN32
-#  include <sys/timeb.h>
-# else
-#  include <sys/time.h>
-# endif
+# include <sys/time.h>
 # include <time.h>
 #else
 # if HAVE_SYS_TIME_H
@@ -58,9 +54,6 @@ SOFTWARE.
 #include <sys/select.h>
 #endif
 #include <stdio.h>
-#if HAVE_WINSOCK_H
-#include <winsock.h>
-#endif
 #if HAVE_SYS_SOCKET_H
 #include <sys/socket.h>
 #endif
@@ -104,26 +97,6 @@ snmp_input(int operation,
     return 1;
 }
 
-in_addr_t
-parse_address(char *address)
-{
-    in_addr_t       addr;
-    struct sockaddr_in saddr;
-    struct hostent *hp;
-
-    if ((addr = inet_addr(address)) != -1)
-        return addr;
-    hp = gethostbyname(address);
-    if (hp == NULL) {
-        fprintf(stderr, "unknown host: %s\n", address);
-        exit(1);
-    } else {
-        memcpy(&saddr.sin_addr, hp->h_addr, hp->h_length);
-        return saddr.sin_addr.s_addr;
-    }
-
-}
-
 static void
 optProc(int argc, char *const *argv, int opt)
 {
@@ -149,15 +122,17 @@ main(int argc, char *argv[])
 {
     netsnmp_session session, *ss;
     netsnmp_pdu    *pdu, *response;
-    in_addr_t      *pdu_in_addr_t;
     oid             name[MAX_OID_LEN];
     size_t          name_length;
     int             arg;
     int             status;
-    char           *trap = NULL, *specific = NULL, *description =
-        NULL, *agent = NULL;
+    char           *trap = NULL;
     char           *prognam;
     int             exitval = 0;
+#ifndef NETSNMP_DISABLE_SNMPV1
+    char           *specific = NULL, *description = NULL, *agent = NULL;
+    in_addr_t      *pdu_in_addr_t;
+#endif
 
     prognam = strrchr(argv[0], '/');
     if (prognam)
@@ -170,9 +145,11 @@ main(int argc, char *argv[])
     if (strcmp(prognam, "snmpinform") == 0)
         inform = 1;
     switch (arg = snmp_parse_args(argc, argv, &session, "C:", optProc)) {
-    case -2:
+    case NETSNMP_PARSE_ARGS_ERROR:
+        exit(1);
+    case NETSNMP_PARSE_ARGS_SUCCESS_EXIT:
         exit(0);
-    case -1:
+    case NETSNMP_PARSE_ARGS_ERROR_USAGE:
         usage();
         exit(1);
     default:
@@ -183,8 +160,20 @@ main(int argc, char *argv[])
 
     session.callback = snmp_input;
     session.callback_magic = NULL;
-    netsnmp_ds_set_int(NETSNMP_DS_LIBRARY_ID, NETSNMP_DS_LIB_DEFAULT_PORT, 
-		       SNMP_TRAP_PORT);
+
+    /*
+     * setup the local engineID which may be for either or both of the
+     * contextEngineID and/or the securityEngineID.
+     */
+    setup_engineID(NULL, NULL);
+
+    /* if we don't have a contextEngineID set via command line
+       arguments, use our internal engineID as the context. */
+    if (session.contextEngineIDLen == 0 ||
+        session.contextEngineID == NULL) {
+        session.contextEngineID =
+            snmpv3_generate_engineID(&session.contextEngineIDLen);
+    }
 
     if (session.version == SNMP_VERSION_3 && !inform) {
         /*
@@ -205,24 +194,12 @@ main(int argc, char *argv[])
          */
 
         /*
-         * setup the engineID based on IP addr.  Need a different
-         * algorthim here.  This will cause problems with agents on the
-         * same machine sending traps. 
-         */
-        setup_engineID(NULL, NULL);
-
-        /*
          * pick our own engineID 
          */
         if (session.securityEngineIDLen == 0 ||
             session.securityEngineID == NULL) {
             session.securityEngineID =
                 snmpv3_generate_engineID(&session.securityEngineIDLen);
-        }
-        if (session.contextEngineIDLen == 0 ||
-            session.contextEngineID == NULL) {
-            session.contextEngineID =
-                snmpv3_generate_engineID(&session.contextEngineIDLen);
         }
 
         /*
@@ -237,22 +214,32 @@ main(int argc, char *argv[])
             session.engineTime = get_uptime();  /* but it'll work. Sort of. */
     }
 
-    ss = snmp_open(&session);
+    ss = snmp_add(&session,
+                  netsnmp_transport_open_client("snmptrap", session.peername),
+                  NULL, NULL);
     if (ss == NULL) {
         /*
-         * diagnose snmp_open errors with the input netsnmp_session pointer 
+         * diagnose netsnmp_transport_open_client and snmp_add errors with
+         * the input netsnmp_session pointer
          */
         snmp_sess_perror("snmptrap", &session);
         SOCK_CLEANUP;
         exit(1);
     }
 
+#ifndef NETSNMP_DISABLE_SNMPV1
     if (session.version == SNMP_VERSION_1) {
         if (inform) {
             fprintf(stderr, "Cannot send INFORM as SNMPv1 PDU\n");
+            SOCK_CLEANUP;
             exit(1);
         }
         pdu = snmp_pdu_create(SNMP_MSG_TRAP);
+        if ( !pdu ) {
+            fprintf(stderr, "Failed to create trap PDU\n");
+            SOCK_CLEANUP;
+            exit(1);
+        }
         pdu_in_addr_t = (in_addr_t *) pdu->agent_addr;
         if (arg == argc) {
             fprintf(stderr, "No enterprise oid\n");
@@ -286,7 +273,11 @@ main(int argc, char *argv[])
         }
         agent = argv[arg];
         if (agent != NULL && strlen(agent) != 0) {
-            *pdu_in_addr_t = parse_address(agent);
+            int ret = netsnmp_gethostbyname_v4(agent, pdu_in_addr_t);
+            if (ret < 0) {
+                fprintf(stderr, "unknown host: %s\n", agent);
+                exit(1);
+            }
         } else {
             *pdu_in_addr_t = get_myaddr();
         }
@@ -317,11 +308,18 @@ main(int argc, char *argv[])
             pdu->time = get_uptime();
         else
             pdu->time = atol(description);
-    } else {
+    } else
+#endif
+    {
         long            sysuptime;
         char            csysuptime[20];
 
         pdu = snmp_pdu_create(inform ? SNMP_MSG_INFORM : SNMP_MSG_TRAP2);
+        if ( !pdu ) {
+            fprintf(stderr, "Failed to create notification PDU\n");
+            SOCK_CLEANUP;
+            exit(1);
+        }
         if (arg == argc) {
             fprintf(stderr, "Missing up-time parameter\n");
             usage();
@@ -388,6 +386,7 @@ main(int argc, char *argv[])
         snmp_free_pdu(response);
 
     snmp_close(ss);
+    snmp_shutdown("snmpapp");
     SOCK_CLEANUP;
     return exitval;
 }

@@ -74,6 +74,8 @@ init_testhandler(void)
         return;
 
     table_info = SNMP_MALLOC_TYPEDEF(netsnmp_table_registration_info);
+    if (table_info == NULL)
+        return;
 
     netsnmp_table_helper_add_indexes(table_info, ASN_INTEGER, ASN_INTEGER,
                                      0);
@@ -123,6 +125,8 @@ init_testhandler(void)
      * automatically parsed column and index information 
      */
     table_info = SNMP_MALLOC_TYPEDEF(netsnmp_table_registration_info);
+    if (table_info == NULL)
+        return;
 
     netsnmp_table_helper_add_indexes(table_info, ASN_INTEGER,
                                      ASN_OCTET_STR, 0);
@@ -204,26 +208,12 @@ my_test_table_handler(netsnmp_mib_handler *handler,
 {
 
     netsnmp_table_registration_info
-     
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
         *handler_reg_info =
         (netsnmp_table_registration_info *) handler->prev->myvoid;
+
     netsnmp_table_request_info *table_info;
     u_long          result;
     int             x, y;
-
 
     while (requests) {
         netsnmp_variable_list *var = requests->requestvb;
@@ -399,8 +389,10 @@ my_data_table_handler(netsnmp_mib_handler *handler,
     netsnmp_table_row *row;
 
     while (requests) {
-        if (requests->processed)
+        if (requests->processed) {
+            requests = requests->next;
             continue;
+        }
 
         /*
          * extract our stored data and table info 

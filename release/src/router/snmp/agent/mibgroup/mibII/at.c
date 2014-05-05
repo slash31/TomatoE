@@ -1,10 +1,22 @@
-#undef CAN_USE_SYSCTL
 /*
  *  Template MIB group implementation - at.c
  *
  */
 
+/* Portions of this file are subject to the following copyright(s).  See
+ * the Net-SNMP's COPYING file for more details and other copyrights
+ * that may apply:
+ */
+/*
+ * Portions of this file are copyrighted by:
+ * Copyright © 2003 Sun Microsystems, Inc. All rights reserved.
+ * Use is subject to license terms specified in the COPYING file
+ * distributed with the Net-SNMP package.
+ */
+
 #include <net-snmp/net-snmp-config.h>
+#include "mibII_common.h" /* for NETSNMP_KLOOKUP */
+
 #if HAVE_STRING_H
 #include <string.h>
 #else
@@ -13,17 +25,13 @@
 #if HAVE_STDLIB_H
 #include <stdlib.h>
 #endif
-#if defined(IFNET_NEEDS_KERNEL) && !defined(_KERNEL)
+#if defined(NETSNMP_IFNET_NEEDS_KERNEL) && !defined(_KERNEL)
 #define _KERNEL 1
 #define _I_DEFINED_KERNEL
 #endif
 #include <sys/types.h>
 #if TIME_WITH_SYS_TIME
-# ifdef WIN32
-#  include <sys/timeb.h>
-# else
 # include <sys/time.h>
-# endif
 # include <time.h>
 #else
 # if HAVE_SYS_TIME_H
@@ -77,12 +85,6 @@
 #ifdef solaris2
 #include "kernel_sunos5.h"
 #endif
-#if HAVE_WINSOCK_H
-#include <winsock.h>
-#endif
-#if HAVE_DMALLOC_H
-#include <dmalloc.h>
-#endif
 
 #ifdef hpux11
 #include <sys/mib.h>
@@ -96,14 +98,15 @@
 #include "at.h"
 #include "interfaces.h"
 
-#if defined(HAVE_SYS_SYSCTL_H) && !defined(CAN_USE_SYSCTL)
-# if defined(RTF_LLINFO) && !defined(irix6)
-#  define CAN_USE_SYSCTL 1
+#include <net-snmp/data_access/interface.h>
+
+#if defined(HAVE_SYS_SYSCTL_H) && !defined(NETSNMP_CAN_USE_SYSCTL)
+# if defined(RTF_LLINFO) 
+#  define NETSNMP_CAN_USE_SYSCTL 1
 # endif
 #endif
 
 #ifdef cygwin
-#define WIN32
 #include <windows.h>
 #endif
 
@@ -114,13 +117,13 @@
 	 *
 	 *********************/
 
-#ifndef WIN32
+#if !defined (WIN32) && !defined (cygwin)
 #ifndef solaris2
 static void     ARP_Scan_Init(void);
 #ifdef ARP_SCAN_FOUR_ARGUMENTS
-static int      ARP_Scan_Next(u_long *, char *, u_long *, u_short *);
+static int      ARP_Scan_Next(in_addr_t *, char *, int *, u_long *, u_short *);
 #else
-static int      ARP_Scan_Next(u_long *, char *, u_long *);
+static int      ARP_Scan_Next(in_addr_t *, char *, int *, u_long *);
 #endif
 #endif
 #endif
@@ -136,9 +139,12 @@ static int      ARP_Scan_Next(u_long *, char *, u_long *);
  * information at 
  */
 struct variable1 at_variables[] = {
-    {ATIFINDEX, ASN_INTEGER, RONLY, var_atEntry, 1, {1}},
-    {ATPHYSADDRESS, ASN_OCTET_STR, RONLY, var_atEntry, 1, {2}},
-    {ATNETADDRESS, ASN_IPADDRESS, RONLY, var_atEntry, 1, {3}}
+    {ATIFINDEX, ASN_INTEGER, NETSNMP_OLDAPI_RONLY,
+     var_atEntry, 1, {1}},
+    {ATPHYSADDRESS, ASN_OCTET_STR, NETSNMP_OLDAPI_RONLY,
+     var_atEntry, 1, {2}},
+    {ATNETADDRESS, ASN_IPADDRESS, NETSNMP_OLDAPI_RONLY,
+     var_atEntry, 1, {3}}
 };
 
 /*
@@ -159,7 +165,7 @@ init_at(void)
 #endif
 }
 
-#ifndef WIN32
+#if !defined (WIN32) && !defined (cygwin)
 #ifndef solaris2
 
 /*
@@ -195,8 +201,11 @@ var_atEntry(struct variable *vp,
     oid            *op;
     oid             lowest[16];
     oid             current[16];
-    static char     PhysAddr[6], LowPhysAddr[6];
-    u_long          Addr, LowAddr, foundone;
+    static char     PhysAddr[MAX_MAC_ADDR_LEN], LowPhysAddr[MAX_MAC_ADDR_LEN];
+    static int      PhysAddrLen, LowPhysAddrLen;
+    in_addr_t       Addr, LowAddr;
+    int             foundone;
+    static in_addr_t      addr_ret;
 #ifdef ARP_SCAN_FOUR_ARGUMENTS
     u_short         ifIndex, lowIfIndex = 0;
 #endif                          /* ARP_SCAN_FOUR_ARGUMENTS */
@@ -221,7 +230,7 @@ var_atEntry(struct variable *vp,
     ARP_Scan_Init();
     for (;;) {
 #ifdef ARP_SCAN_FOUR_ARGUMENTS
-        if (ARP_Scan_Next(&Addr, PhysAddr, &ifType, &ifIndex) == 0)
+        if (ARP_Scan_Next(&Addr, PhysAddr, &PhysAddrLen, &ifType, &ifIndex) == 0)
             break;
         current[10] = ifIndex;
 
@@ -232,7 +241,7 @@ var_atEntry(struct variable *vp,
             op = current + 11;
         }
 #else                           /* ARP_SCAN_FOUR_ARGUMENTS */
-        if (ARP_Scan_Next(&Addr, PhysAddr, &ifType) == 0)
+        if (ARP_Scan_Next(&Addr, PhysAddr, &PhysAddrLen, &ifType) == 0)
             break;
         current[10] = 1;
 
@@ -259,6 +268,7 @@ var_atEntry(struct variable *vp,
                 lowIfIndex = ifIndex;
 #endif                          /*  ARP_SCAN_FOUR_ARGUMENTS */
                 memcpy(LowPhysAddr, PhysAddr, sizeof(PhysAddr));
+                LowPhysAddrLen = PhysAddrLen;
                 lowIfType = ifType;
                 break;          /* no need to search further */
             }
@@ -280,6 +290,7 @@ var_atEntry(struct variable *vp,
                 lowIfIndex = ifIndex;
 #endif                          /*  ARP_SCAN_FOUR_ARGUMENTS */
                 memcpy(LowPhysAddr, PhysAddr, sizeof(PhysAddr));
+                LowPhysAddrLen = PhysAddrLen;
                 lowIfType = ifType;
             }
         }
@@ -289,26 +300,26 @@ var_atEntry(struct variable *vp,
 
     memcpy((char *) name, (char *) lowest, oid_length * sizeof(oid));
     *length = oid_length;
-    *write_method = 0;
+    *write_method = (WriteMethod*)0;
     switch (vp->magic) {
     case IPMEDIAIFINDEX:       /* also ATIFINDEX */
         *var_len = sizeof long_return;
 #ifdef ARP_SCAN_FOUR_ARGUMENTS
         long_return = lowIfIndex;
 #else                           /* ARP_SCAN_FOUR_ARGUMENTS */
-#if NO_DUMMY_VALUES
+#if NETSNMP_NO_DUMMY_VALUES
         return NULL;
 #endif
         long_return = 1;        /* XXX */
 #endif                          /* ARP_SCAN_FOUR_ARGUMENTS */
         return (u_char *) & long_return;
     case IPMEDIAPHYSADDRESS:   /* also ATPHYSADDRESS */
-        *var_len = sizeof(LowPhysAddr);
+        *var_len = LowPhysAddrLen;
         return (u_char *) LowPhysAddr;
     case IPMEDIANETADDRESS:    /* also ATNETADDRESS */
-        *var_len = sizeof long_return;
-        long_return = LowAddr;
-        return (u_char *) & long_return;
+        *var_len = sizeof(addr_ret);
+        addr_ret = LowAddr;
+        return (u_char *) & addr_ret;
     case IPMEDIATYPE:
         *var_len = sizeof long_return;
         long_return = lowIfType;
@@ -331,17 +342,24 @@ AT_Cmp(void *addr, void *ep)
 {
     mib2_ipNetToMediaEntry_t *mp = (mib2_ipNetToMediaEntry_t *) ep;
     int             ret = -1;
+    oid             index;
+
+#ifdef NETSNMP_INCLUDE_IFTABLE_REWRITES
+    mp->ipNetToMediaIfIndex.o_bytes[mp->ipNetToMediaIfIndex.o_length] = '\0';
+    index = netsnmp_access_interface_index_find(
+                    mp->ipNetToMediaIfIndex.o_bytes);
+#else
+    index = Interface_Index_By_Name(mp->ipNetToMediaIfIndex.o_bytes,
+                                    mp->ipNetToMediaIfIndex.o_length);
+#endif
     DEBUGMSGTL(("mibII/at", "......... AT_Cmp %lx<>%lx %d<>%d (%.5s)\n",
-                mp->ipNetToMediaNetAddress, ((if_ip_t *) addr)->ipAddr,
-                ((if_ip_t *) addr)->ifIdx,
-                Interface_Index_By_Name(mp->ipNetToMediaIfIndex.o_bytes,
-                                        mp->ipNetToMediaIfIndex.o_length),
+                (unsigned long)mp->ipNetToMediaNetAddress,
+                (unsigned long)((if_ip_t *) addr)->ipAddr,
+                ((if_ip_t *) addr)->ifIdx, index,
                 mp->ipNetToMediaIfIndex.o_bytes));
     if (mp->ipNetToMediaNetAddress != ((if_ip_t *) addr)->ipAddr)
         ret = 1;
-    else if (((if_ip_t *) addr)->ifIdx !=
-             Interface_Index_By_Name(mp->ipNetToMediaIfIndex.o_bytes,
-                                     mp->ipNetToMediaIfIndex.o_length))
+    else if (((if_ip_t *) addr)->ifIdx != index)
         ret = 1;
     else
         ret = 0;
@@ -368,10 +386,12 @@ var_atEntry(struct variable * vp,
     oid             lowest[AT_MAX_NAME_LENGTH];
     oid             current[AT_MAX_NAME_LENGTH];
     if_ip_t         NextAddr;
-    mib2_ipNetToMediaEntry_t entry, Lowentry;
+    mib2_ipNetToMediaEntry_t entry;
+    static mib2_ipNetToMediaEntry_t Lowentry;
     int             Found = 0;
     req_e           req_type;
-    int             offset, olength;
+    int             offset, olength = 0;
+    static in_addr_t      addr_ret;
 
     /*
      * fill in object part of name for current (less sizeof instance part) 
@@ -392,9 +412,15 @@ var_atEntry(struct variable * vp,
             (MIB_IP_NET, &entry, sizeof(mib2_ipNetToMediaEntry_t),
              req_type, &AT_Cmp, &NextAddr) != 0)
             break;
-        current[AT_IFINDEX_OFF] =
-            Interface_Index_By_Name(entry.ipNetToMediaIfIndex.o_bytes,
-                                    entry.ipNetToMediaIfIndex.o_length);
+#ifdef NETSNMP_INCLUDE_IFTABLE_REWRITES
+        entry.ipNetToMediaIfIndex.o_bytes[entry.ipNetToMediaIfIndex.o_length] = '\0';
+        current[AT_IFINDEX_OFF] = netsnmp_access_interface_index_find(
+           entry.ipNetToMediaIfIndex.o_bytes);
+#else
+        current[AT_IFINDEX_OFF] = 
+           Interface_Index_By_Name(entry.ipNetToMediaIfIndex.o_bytes,
+                                   entry.ipNetToMediaIfIndex.o_length);
+#endif
         if (current[6] == 3) {  /* AT group oid */
             current[AT_IFINDEX_OFF + 1] = 1;
             offset = AT_IFINDEX_OFF + 2;
@@ -437,19 +463,24 @@ var_atEntry(struct variable * vp,
     switch (vp->magic) {
     case IPMEDIAIFINDEX:
         *var_len = sizeof long_return;
-        long_return =
-            Interface_Index_By_Name(Lowentry.ipNetToMediaIfIndex.o_bytes,
-                                    Lowentry.ipNetToMediaIfIndex.o_length);
+#ifdef NETSNMP_INCLUDE_IFTABLE_REWRITES
+        Lowentry.ipNetToMediaIfIndex.o_bytes[
+            Lowentry.ipNetToMediaIfIndex.o_length] = '\0';
+        long_return = netsnmp_access_interface_index_find(
+            Lowentry.ipNetToMediaIfIndex.o_bytes);
+#else
+        long_return = Interface_Index_By_Name(
+            Lowentry.ipNetToMediaIfIndex.o_bytes,
+            Lowentry.ipNetToMediaIfIndex.o_length);
+#endif
         return (u_char *) & long_return;
     case IPMEDIAPHYSADDRESS:
         *var_len = Lowentry.ipNetToMediaPhysAddress.o_length;
-        (void) memcpy(return_buf, Lowentry.ipNetToMediaPhysAddress.o_bytes,
-                      *var_len);
-        return (u_char *) return_buf;
+        return Lowentry.ipNetToMediaPhysAddress.o_bytes;
     case IPMEDIANETADDRESS:
-        *var_len = sizeof long_return;
-        long_return = Lowentry.ipNetToMediaNetAddress;
-        return (u_char *) & long_return;
+        *var_len = sizeof(addr_ret);
+        addr_ret = Lowentry.ipNetToMediaNetAddress;
+        return (u_char *) &addr_ret;
     case IPMEDIATYPE:
         *var_len = sizeof long_return;
         long_return = Lowentry.ipNetToMediaType;
@@ -472,11 +503,11 @@ var_atEntry(struct variable * vp,
 #ifndef solaris2
 
 static int      arptab_size, arptab_current;
-#if CAN_USE_SYSCTL
+#if NETSNMP_CAN_USE_SYSCTL
 static char    *lim, *rtnext;
 static char    *at = 0;
 #else
-#ifdef STRUCT_ARPHD_HAS_AT_NEXT
+#ifdef HAVE_STRUCT_ARPHD_AT_NEXT
 static struct arphd *at = 0;
 static struct arptab *at_ptr, at_entry;
 static struct arpcom at_com;
@@ -497,12 +528,12 @@ static struct arptab *at = NULL;
 static int      arptab_curr_max_size = 0;
 
 #endif
-#endif                          /* CAN_USE_SYSCTL */
+#endif                          /* NETSNMP_CAN_USE_SYSCTL */
 
 static void
 ARP_Scan_Init(void)
 {
-#ifndef CAN_USE_SYSCTL
+#ifndef NETSNMP_CAN_USE_SYSCTL
 #ifndef linux
 #ifdef hpux11
 
@@ -543,15 +574,19 @@ ARP_Scan_Init(void)
 #else                           /* hpux11 */
 
     if (!at) {
+#ifdef ARPTAB_SIZE_SYMBOL
         auto_nlist(ARPTAB_SIZE_SYMBOL, (char *) &arptab_size,
                    sizeof arptab_size);
-#ifdef STRUCT_ARPHD_HAS_AT_NEXT
+#ifdef HAVE_STRUCT_ARPHD_AT_NEXT
         at = (struct arphd *) malloc(arptab_size * sizeof(struct arphd));
 #else
         at = (struct arptab *) malloc(arptab_size * sizeof(struct arptab));
 #endif
+#else
+        return;
+#endif
     }
-#ifdef STRUCT_ARPHD_HAS_AT_NEXT
+#ifdef HAVE_STRUCT_ARPHD_AT_NEXT
     auto_nlist(ARPTAB_SYMBOL, (char *) at,
                arptab_size * sizeof(struct arphd));
     at_ptr = at[0].at_next;
@@ -566,10 +601,12 @@ ARP_Scan_Init(void)
 
     static time_t   tm = 0;     /* Time of last scan */
     FILE           *in;
-    int             i;
+    int             i, j;
     char            line[128];
-    int             za, zb, zc, zd, ze, zf, zg, zh, zi, zj;
+    int             za, zb, zc, zd;
     char            ifname[21];
+    char            mac[3*MAX_MAC_ADDR_LEN+1];
+    char           *tok;
 
     arptab_current = 0;         /* Anytime this is called we need to reset 'current' */
 
@@ -592,7 +629,7 @@ ARP_Scan_Init(void)
     i = 0;
     while (fgets(line, sizeof(line), in)) {
         u_long          tmp_a;
-        int             tmp_flags;
+        unsigned int    tmp_flags;
         if (i >= arptab_curr_max_size) {
             struct arptab  *newtab = (struct arptab *)
                 realloc(at, (sizeof(struct arptab) *
@@ -608,11 +645,10 @@ ARP_Scan_Init(void)
                 at = newtab;
             }
         }
-        if (12 !=
+        if (7 !=
             sscanf(line,
-                   "%d.%d.%d.%d 0x%*x 0x%x %x:%x:%x:%x:%x:%x %*[^ ] %20s\n",
-                   &za, &zb, &zc, &zd, &tmp_flags, &ze, &zf, &zg, &zh, &zi,
-                   &zj, ifname)) {
+                   "%d.%d.%d.%d 0x%*x 0x%x %s %*[^ ] %20s\n",
+                   &za, &zb, &zc, &zd, &tmp_flags, mac, ifname)) {
             snmp_log(LOG_ERR, "Bad line in /proc/net/arp: %s", line);
             continue;
         }
@@ -623,17 +659,17 @@ ARP_Scan_Init(void)
         if (tmp_flags == 0) {
             continue;
         }
+        ifname[sizeof(ifname)-1] = 0; /* make sure name is null terminated */
         at[i].at_flags = tmp_flags;
-        at[i].at_enaddr[0] = ze;
-        at[i].at_enaddr[1] = zf;
-        at[i].at_enaddr[2] = zg;
-        at[i].at_enaddr[3] = zh;
-        at[i].at_enaddr[4] = zi;
-        at[i].at_enaddr[5] = zj;
         tmp_a = ((u_long) za << 24) |
             ((u_long) zb << 16) | ((u_long) zc << 8) | ((u_long) zd);
         at[i].at_iaddr.s_addr = htonl(tmp_a);
-        at[i].if_index = Interface_Index_By_Name(ifname, strlen(ifname));
+        at[i].if_index = netsnmp_access_interface_index_find(ifname);
+        
+        for (j=0,tok=strtok(mac, ":"); tok != NULL; tok=strtok(NULL, ":"),j++) {
+        	at[i].at_enaddr[j] = strtol(tok, NULL, 16);
+        }
+        at[i].at_enaddr_len = j;
         i++;
     }
     arptab_size = i;
@@ -641,7 +677,7 @@ ARP_Scan_Init(void)
     fclose(in);
     time(&tm);
 #endif                          /* linux */
-#else                           /* CAN_USE_SYSCTL */
+#else                           /* NETSNMP_CAN_USE_SYSCTL */
 
     int             mib[6];
     size_t          needed;
@@ -651,7 +687,11 @@ ARP_Scan_Init(void)
     mib[2] = 0;
     mib[3] = AF_INET;
     mib[4] = NET_RT_FLAGS;
+#if defined RTF_LLINFO
     mib[5] = RTF_LLINFO;
+#else
+    mib[5] = 0;
+#endif
 
     if (at)
         free(at);
@@ -672,19 +712,20 @@ ARP_Scan_Init(void)
         }
     }
 
-#endif                          /* CAN_USE_SYSCTL */
+#endif                          /* NETSNMP_CAN_USE_SYSCTL */
 }
 
 #ifdef ARP_SCAN_FOUR_ARGUMENTS
 static int
-ARP_Scan_Next(u_long * IPAddr, char *PhysAddr, u_long * ifType,
-              u_short * ifIndex)
+ARP_Scan_Next(in_addr_t * IPAddr, char *PhysAddr, int *PhysAddrLen,
+              u_long * ifType, u_short * ifIndex)
 #else
 static int
-ARP_Scan_Next(u_long * IPAddr, char *PhysAddr, u_long * ifType)
+ARP_Scan_Next(in_addr_t * IPAddr, char *PhysAddr, int *PhysAddrLen,
+              u_long * ifType)
 #endif
 {
-#ifndef CAN_USE_SYSCTL
+#ifndef NETSNMP_CAN_USE_SYSCTL
 #ifdef linux
     if (arptab_current < arptab_size) {
         /*
@@ -694,9 +735,10 @@ ARP_Scan_Next(u_long * IPAddr, char *PhysAddr, u_long * ifType)
         *ifType =
             (at[arptab_current].
              at_flags & ATF_PERM) ? 4 /*static */ : 3 /*dynamic */ ;
-        //*ifIndex = at[arptab_current].if_index;
+        *ifIndex = at[arptab_current].if_index;
         memcpy(PhysAddr, &at[arptab_current].at_enaddr,
                sizeof(at[arptab_current].at_enaddr));
+        *PhysAddrLen = at[arptab_current].at_enaddr_len;
 
         /*
          * increment to point next entry 
@@ -717,6 +759,7 @@ ARP_Scan_Next(u_long * IPAddr, char *PhysAddr, u_long * ifType)
                at[arptab_current].PhysAddr.o_length);
         *ifType = at[arptab_current].Type;
         *ifIndex = at[arptab_current].IfIndex;
+        *PhysAddrLen = at[arptab_current].PhysAddr.o_length;
         /*
          * increment to point next entry 
          */
@@ -730,7 +773,7 @@ ARP_Scan_Next(u_long * IPAddr, char *PhysAddr, u_long * ifType)
     register struct arptab *atab;
 
     while (arptab_current < arptab_size) {
-#ifdef STRUCT_ARPHD_HAS_AT_NEXT
+#ifdef HAVE_STRUCT_ARPHD_AT_NEXT
         /*
          * The arp table is an array of linked lists of arptab entries.
          * Unused slots have pointers back to the array entry itself 
@@ -746,15 +789,22 @@ ARP_Scan_Next(u_long * IPAddr, char *PhysAddr, u_long * ifType)
             continue;
         }
 
-        klookup(at_ptr, (char *) &at_entry, sizeof(struct arptab));
-        klookup(at_entry.at_ac, (char *) &at_com, sizeof(struct arpcom));
+        if (!NETSNMP_KLOOKUP(at_ptr, (char *) &at_entry, sizeof(struct arptab))) {
+            DEBUGMSGTL(("mibII/at:ARP_Scan_Next", "klookup failed\n"));
+            break;
+        }
+
+        if (!NETSNMP_KLOOKUP(at_entry.at_ac, (char *) &at_com, sizeof(struct arpcom))) {
+            DEBUGMSGTL(("mibII/at:ARP_Scan_Next", "klookup failed\n"));
+            break;
+        }
 
         at_ptr = at_entry.at_next;
         atab = &at_entry;
         *ifIndex = at_com.ac_if.if_index;       /* not strictly ARPHD */
-#else                           /* STRUCT_ARPHD_HAS_AT_NEXT */
+#else                           /* HAVE_STRUCT_ARPHD_AT_NEXT */
         atab = &at[arptab_current++];
-#endif                          /* STRUCT_ARPHD_HAS_AT_NEXT */
+#endif                          /* HAVE_STRUCT_ARPHD_AT_NEXT */
         if (!(atab->at_flags & ATF_COM))
             continue;
         *ifType = (atab->at_flags & ATF_PERM) ? 4 : 3;
@@ -762,10 +812,12 @@ ARP_Scan_Next(u_long * IPAddr, char *PhysAddr, u_long * ifType)
 #if defined (sunV3) || defined(sparc) || defined(hpux)
         memcpy(PhysAddr, (char *) &atab->at_enaddr,
                sizeof(atab->at_enaddr));
+        *PhysAddrLen = sizeof(atab->at_enaddr);
 #endif
 #if defined(mips) || defined(ibm032)
         memcpy(PhysAddr, (char *) atab->at_enaddr,
                sizeof(atab->at_enaddr));
+        *PhysAddrLen = sizeof(atab->at_enaddr);
 #endif
         return (1);
     }
@@ -773,7 +825,7 @@ ARP_Scan_Next(u_long * IPAddr, char *PhysAddr, u_long * ifType)
 
     return 0;                   /* we need someone with an irix box to fix this section */
 
-#else                           /* !CAN_USE_SYSCTL */
+#else                           /* !NETSNMP_CAN_USE_SYSCTL */
     struct rt_msghdr *rtm;
     struct sockaddr_inarp *sin;
     struct sockaddr_dl *sdl;
@@ -784,19 +836,24 @@ ARP_Scan_Next(u_long * IPAddr, char *PhysAddr, u_long * ifType)
         sdl = (struct sockaddr_dl *) (sin + 1);
         rtnext += rtm->rtm_msglen;
         if (sdl->sdl_alen) {
+#ifdef irix6
+            *IPAddr = sin->sarp_addr.s_addr;
+#else
             *IPAddr = sin->sin_addr.s_addr;
+#endif
             memcpy(PhysAddr, (char *) LLADDR(sdl), sdl->sdl_alen);
+            *PhysAddrLen = sdl->sdl_alen;
             *ifIndex = sdl->sdl_index;
             *ifType = 1;        /* XXX */
             return (1);
         }
     }
     return (0);                 /* "EOF" */
-#endif                          /* !CAN_USE_SYSCTL */
+#endif                          /* !NETSNMP_CAN_USE_SYSCTL */
 }
 #endif                          /* solaris2 */
 
-#else                           /* WIN32 */
+#elif defined(HAVE_IPHLPAPI_H)  /* WIN32 cygwin */
 #include <iphlpapi.h>
 
 extern WriteMethod write_arp;
@@ -830,8 +887,11 @@ var_atEntry(struct variable *vp,
     DWORD           status = NO_ERROR;
     DWORD           dwActualSize = 0;
     UINT            i;
+    int             j;
     u_char          dest_addr[4];
-
+    void           *result = NULL;
+    static in_addr_t	addr_ret;
+    
     /*
      * fill in object part of name for current (less sizeof instance part) 
      */
@@ -846,15 +906,12 @@ var_atEntry(struct variable *vp,
 
     status = GetIpNetTable(pIpNetTable, &dwActualSize, TRUE);
     if (status == ERROR_INSUFFICIENT_BUFFER) {
-        pIpNetTable = (PMIB_IPNETTABLE) malloc(dwActualSize);
-        if (pIpNetTable != NULL) {
-            /*
-             * Get the sorted IpNet Table 
-             */
+        pIpNetTable = malloc(dwActualSize);
+        if (pIpNetTable)
             status = GetIpNetTable(pIpNetTable, &dwActualSize, TRUE);
-        }
     }
 
+    i = -1;
 
     if (status == NO_ERROR) {
         for (i = 0; i < pIpNetTable->dwNumEntries; ++i) {
@@ -909,57 +966,60 @@ var_atEntry(struct variable *vp,
             arp_row->dwIndex = name[10];
 
             if (*length == 15) {        /* ipNetToMediaTable */
-                i = 11;
+                j = 11;
             } else {            /* at Table */
 
-                i = 12;
+                j = 12;
             }
 
-            dest_addr[0] = (u_char) name[i];
-            dest_addr[1] = (u_char) name[i + 1];
-            dest_addr[2] = (u_char) name[i + 2];
-            dest_addr[3] = (u_char) name[i + 3];
+            dest_addr[0] = (u_char) name[j];
+            dest_addr[1] = (u_char) name[j + 1];
+            dest_addr[2] = (u_char) name[j + 2];
+            dest_addr[3] = (u_char) name[j + 3];
             arp_row->dwAddr = *((DWORD *) dest_addr);
 
             arp_row->dwType = 4;        /* Static */
             arp_row->dwPhysAddrLen = 0;
         }
-        free(pIpNetTable);
-        return (NULL);
+        goto out;
     }
 
     create_flag = 0;
     memcpy((char *) name, (char *) lowest, oid_length * sizeof(oid));
     *length = oid_length;
     *write_method = write_arp;
+    netsnmp_assert(0 <= i && i < pIpNetTable->dwNumEntries);
     *arp_row = pIpNetTable->table[i];
 
     switch (vp->magic) {
     case IPMEDIAIFINDEX:       /* also ATIFINDEX */
         *var_len = sizeof long_return;
         long_return = pIpNetTable->table[i].dwIndex;
-        free(pIpNetTable);
-        return (u_char *) & long_return;
+        result = &long_return;
+        break;
     case IPMEDIAPHYSADDRESS:   /* also ATPHYSADDRESS */
         *var_len = pIpNetTable->table[i].dwPhysAddrLen;
         memcpy(return_buf, pIpNetTable->table[i].bPhysAddr, *var_len);
-        free(pIpNetTable);
-        return (u_char *) return_buf;
+        result = return_buf;
+        break;
     case IPMEDIANETADDRESS:    /* also ATNETADDRESS */
-        *var_len = sizeof long_return;
-        long_return = pIpNetTable->table[i].dwAddr;
-        free(pIpNetTable);
-        return (u_char *) & long_return;
+        *var_len = sizeof(addr_ret);
+        addr_ret = pIpNetTable->table[i].dwAddr;
+        result = &addr_ret;
+        break;
     case IPMEDIATYPE:
         *var_len = sizeof long_return;
         long_return = pIpNetTable->table[i].dwType;
-        free(pIpNetTable);
-        return (u_char *) & long_return;
+        result = &long_return;
+        break;
     default:
         DEBUGMSGTL(("snmpd", "unknown sub-id %d in var_atEntry\n",
                     vp->magic));
+        break;
     }
-    return NULL;
+out:
+    free(pIpNetTable);
+    return result;
 }
 
 int
@@ -1152,7 +1212,7 @@ write_arp(int action,
              */
             if (!create_flag) {
                 if ((status = SetIpNetEntry(oldarp_row)) != NO_ERROR) {
-                    snmp_log(LOG_ERR, "Error in case UNDO, status : %d\n",
+                    snmp_log(LOG_ERR, "Error in case UNDO, status : %lu\n",
                              status);
                     retval = SNMP_ERR_UNDOFAILED;
                 }
@@ -1163,7 +1223,7 @@ write_arp(int action,
 
                 if ((status = SetIpNetEntry(arp_row)) != NO_ERROR) {
                     snmp_log(LOG_ERR,
-                             "Error while deleting added row, status : %d\n",
+                             "Error while deleting added row, status : %lu\n",
                              status);
                     retval = SNMP_ERR_UNDOFAILED;
                 }
@@ -1183,7 +1243,7 @@ write_arp(int action,
             if (arp_row->dwPhysAddrLen != 0) {
                 if ((status = CreateIpNetEntry(arp_row)) != NO_ERROR) {
                     snmp_log(LOG_ERR,
-                             "Inside COMMIT: CreateIpNetEntry failed, status %d\n",
+                             "Inside COMMIT: CreateIpNetEntry failed, status %lu\n",
                              status);
                     retval = SNMP_ERR_COMMITFAILED;
                 }
@@ -1213,4 +1273,4 @@ write_arp(int action,
     }
     return retval;
 }
-#endif                          /* WIN32 */
+#endif                          /* WIN32 cygwin */

@@ -1,5 +1,8 @@
 #include <net-snmp/net-snmp-config.h>
 
+#include <net-snmp/types.h>
+#include <net-snmp/library/snmp_transport.h>
+
 #include <stdio.h>
 #if HAVE_STRING_H
 #include <string.h>
@@ -12,6 +15,11 @@
 #include <stdlib.h>
 #endif
 
+#include <ctype.h>
+
+#if HAVE_UNISTD_H
+#include <unistd.h>
+#endif
 #if HAVE_DMALLOC_H
 #include <dmalloc.h>
 #endif
@@ -19,27 +27,48 @@
 #include <net-snmp/output_api.h>
 #include <net-snmp/utilities.h>
 
-#include <net-snmp/library/snmp_transport.h>
+#include <net-snmp/library/default_store.h>
+
 #include <net-snmp/library/snmpUDPDomain.h>
-#ifdef SNMP_TRANSPORT_TCP_DOMAIN
+#ifdef NETSNMP_TRANSPORT_TLSBASE_DOMAIN
+#include <net-snmp/library/snmpTLSBaseDomain.h>
+#endif
+#ifdef NETSNMP_TRANSPORT_TLSTCP_DOMAIN
+#include <net-snmp/library/snmpTLSTCPDomain.h>
+#endif
+#ifdef NETSNMP_TRANSPORT_STD_DOMAIN
+#include <net-snmp/library/snmpSTDDomain.h>
+#endif
+#ifdef NETSNMP_TRANSPORT_TCP_DOMAIN
 #include <net-snmp/library/snmpTCPDomain.h>
 #endif
-#ifdef SNMP_TRANSPORT_IPX_DOMAIN
+#ifdef NETSNMP_TRANSPORT_DTLSUDP_DOMAIN
+#include <net-snmp/library/snmpDTLSUDPDomain.h>
+#endif
+#ifdef NETSNMP_TRANSPORT_SSH_DOMAIN
+#include <net-snmp/library/snmpSSHDomain.h>
+#endif
+#ifdef NETSNMP_TRANSPORT_ALIAS_DOMAIN
+#include <net-snmp/library/snmpAliasDomain.h>
+#endif
+#ifdef NETSNMP_TRANSPORT_IPX_DOMAIN
 #include <net-snmp/library/snmpIPXDomain.h>
 #endif
-#ifdef SNMP_TRANSPORT_UNIX_DOMAIN
+#ifdef NETSNMP_TRANSPORT_UNIX_DOMAIN
 #include <net-snmp/library/snmpUnixDomain.h>
 #endif
-#ifdef SNMP_TRANSPORT_AAL5PVC_DOMAIN
+#ifdef NETSNMP_TRANSPORT_AAL5PVC_DOMAIN
 #include <net-snmp/library/snmpAAL5PVCDomain.h>
 #endif
-#ifdef SNMP_TRANSPORT_UDPIPV6_DOMAIN
+#ifdef NETSNMP_TRANSPORT_UDPIPV6_DOMAIN
 #include <net-snmp/library/snmpUDPIPv6Domain.h>
 #endif
-#ifdef SNMP_TRANSPORT_TCPIPV6_DOMAIN
+#ifdef NETSNMP_TRANSPORT_TCPIPV6_DOMAIN
 #include <net-snmp/library/snmpTCPIPv6Domain.h>
 #endif
 #include <net-snmp/library/snmp_api.h>
+#include <net-snmp/library/snmp_service.h>
+#include <net-snmp/library/read_config.h>
 
 
 /*
@@ -73,6 +102,15 @@ static void     netsnmp_tdomain_dump(void);
 /*
  * Make a deep copy of an netsnmp_transport.  
  */
+
+void
+init_snmp_transport(void)
+{
+    netsnmp_ds_register_config(ASN_BOOLEAN,
+                               "snmp", "dontLoadHostConfig",
+                               NETSNMP_DS_LIBRARY_ID,
+                               NETSNMP_DS_LIB_DONT_LOAD_HOST_FILES);
+}
 
 netsnmp_transport *
 netsnmp_transport_copy(netsnmp_transport *t)
@@ -137,10 +175,16 @@ netsnmp_transport_copy(netsnmp_transport *t)
     n->f_recv = t->f_recv;
     n->f_send = t->f_send;
     n->f_close = t->f_close;
+    n->f_copy = t->f_copy;
+    n->f_config = t->f_config;
     n->f_fmtaddr = t->f_fmtaddr;
     n->sock = t->sock;
     n->flags = t->flags;
 
+    /* give the transport a chance to do "special things" */
+    if (t->f_copy)
+        t->f_copy(t, n);
+                
     return n;
 }
 
@@ -149,16 +193,108 @@ netsnmp_transport_copy(netsnmp_transport *t)
 void
 netsnmp_transport_free(netsnmp_transport *t)
 {
+    if (NULL == t)
+        return;
+
     if (t->local != NULL) {
-        free(t->local);
+        SNMP_FREE(t->local);
     }
     if (t->remote != NULL) {
-        free(t->remote);
+        SNMP_FREE(t->remote);
     }
     if (t->data != NULL) {
-        free(t->data);
+        SNMP_FREE(t->data);
     }
-    free(t);
+    SNMP_FREE(t);
+}
+
+/*
+ * netsnmp_transport_peer_string
+ *
+ * returns string representation of peer address.
+ *
+ * caller is responsible for freeing the allocated string.
+ */
+char *
+netsnmp_transport_peer_string(netsnmp_transport *t, void *data, int len)
+{
+    char           *str;
+
+    if (NULL == t)
+        return NULL;
+
+    if (t->f_fmtaddr != NULL)
+        str = t->f_fmtaddr(t, data, len);
+    else
+        str = strdup("<UNKNOWN>");
+
+    return str;
+}
+    
+int
+netsnmp_transport_send(netsnmp_transport *t, void *packet, int length,
+                       void **opaque, int *olength)
+{
+    int dumpPacket, debugLength;
+
+    if ((NULL == t) || (NULL == t->f_send)) {
+        DEBUGMSGTL(("transport:pkt:send", "NULL transport or send function\n"));
+        return SNMPERR_GENERR;
+    }
+
+    dumpPacket = netsnmp_ds_get_boolean(NETSNMP_DS_LIBRARY_ID,
+                                        NETSNMP_DS_LIB_DUMP_PACKET);
+    debugLength = (SNMPERR_SUCCESS ==
+                   debug_is_token_registered("transport:send"));
+
+    if (dumpPacket | debugLength) {
+        char *str = netsnmp_transport_peer_string(t,
+                                                  opaque ? *opaque : NULL,
+                                                  olength ? *olength : 0);
+        if (debugLength)
+            DEBUGMSGT_NC(("transport:send","%lu bytes to %s\n",
+                          (unsigned long)length, str));
+        if (dumpPacket)
+            snmp_log(LOG_DEBUG, "\nSending %lu bytes to %s\n", 
+                     (unsigned long)length, str);
+        SNMP_FREE(str);
+    }
+    if (dumpPacket)
+        xdump(packet, length, "");
+
+    return t->f_send(t, packet, length, opaque, olength);
+}
+
+int
+netsnmp_transport_recv(netsnmp_transport *t, void *packet, int length,
+                       void **opaque, int *olength)
+{
+    int debugLength;
+
+    if ((NULL == t) || (NULL == t->f_recv)) {
+        DEBUGMSGTL(("transport:recv", "NULL transport or recv function\n"));
+        return SNMPERR_GENERR;
+    }
+
+    length = t->f_recv(t, packet, length, opaque, olength);
+
+    if (length <=0)
+        return length; /* don't log timeouts/socket closed */
+
+    debugLength = (SNMPERR_SUCCESS ==
+                   debug_is_token_registered("transport:recv"));
+
+    if (debugLength) {
+        char *str = netsnmp_transport_peer_string(t,
+                                                  opaque ? *opaque : NULL,
+                                                  olength ? *olength : 0);
+        if (debugLength)
+            DEBUGMSGT_NC(("transport:recv","%d bytes from %s\n",
+                          length, str));
+        SNMP_FREE(str);
+    }
+
+    return length;
 }
 
 
@@ -188,26 +324,26 @@ void
 netsnmp_tdomain_init(void)
 {
     DEBUGMSGTL(("tdomain", "netsnmp_tdomain_init() called\n"));
-    netsnmp_udp_ctor();
-#ifdef SNMP_TRANSPORT_TCP_DOMAIN
-    netsnmp_tcp_ctor();
-#endif
-#ifdef SNMP_TRANSPORT_IPX_DOMAIN
-    netsnmp_ipx_ctor();
-#endif
-#ifdef SNMP_TRANSPORT_UNIX_DOMAIN
-    netsnmp_unix_ctor();
-#endif
-#ifdef SNMP_TRANSPORT_AAL5PVC_DOMAIN
-    netsnmp_aal5pvc_ctor();
-#endif
-#ifdef SNMP_TRANSPORT_UDPIPV6_DOMAIN
-    netsnmp_udp6_ctor();
-#endif
-#ifdef SNMP_TRANSPORT_TCPIPV6_DOMAIN
-    netsnmp_tcp6_ctor();
-#endif
+
+/* include the configure generated list of constructor calls */
+#include "transports/snmp_transport_inits.h"
+
     netsnmp_tdomain_dump();
+}
+
+void
+netsnmp_clear_tdomain_list(void)
+{
+    netsnmp_tdomain *list = domain_list, *next = NULL;
+    DEBUGMSGTL(("tdomain", "clear_tdomain_list() called\n"));
+
+    while (list != NULL) {
+	next = list->next;
+	SNMP_FREE(list->prefix);
+        /* attention!! list itself is not in the heap, so we must not free it! */
+	list = next;
+    }
+    domain_list = NULL;
 }
 
 
@@ -269,6 +405,7 @@ netsnmp_tdomain_unregister(netsnmp_tdomain *n)
             if (netsnmp_oid_equals(n->name, n->name_length,
                                 d->name, d->name_length) == 0) {
                 *prevNext = n->next;
+		SNMP_FREE(n->prefix);
                 return 1;
             }
             prevNext = &(d->next);
@@ -280,98 +417,216 @@ netsnmp_tdomain_unregister(netsnmp_tdomain *n)
 }
 
 
-
-netsnmp_transport *
-netsnmp_tdomain_transport(const char *string, int local,
-                          const char *default_domain)
+static netsnmp_tdomain *
+find_tdomain(const char* spec)
 {
     netsnmp_tdomain *d;
-    netsnmp_transport *t = NULL;
-    const char     *spec, *addr;
-    char           *cp, *mystring;
-    int             i;
-
-    if (string == NULL) {
-        return NULL;
-    }
-
-    if ((mystring = strdup(string)) == NULL) {
-        DEBUGMSGTL(("tdomain", "can't strdup(\"%s\")\n", string));
-        return NULL;
-    }
-
-    if ((cp = strchr(mystring, ':')) == NULL) {
-        /*
-         * There doesn't appear to be a transport specifier.  
-         */
-        DEBUGMSGTL(("tdomain", "no specifier in \"%s\"\n", mystring));
-        if (*mystring == '/') {
-            spec = "unix";
-            addr = mystring;
-        } else {
-            if (default_domain) {
-                spec = default_domain;
-            } else {
-                spec = "udp";
-            }
-            addr = mystring;
-        }
-    } else {
-        *cp = '\0';
-        spec = mystring;
-        addr = cp + 1;
-    }
-    DEBUGMSGTL(("tdomain", "specifier \"%s\" address \"%s\"\n", spec,
-                addr));
-
     for (d = domain_list; d != NULL; d = d->next) {
-        for (i = 0; d->prefix[i] != NULL; i++) {
+        int i;
+        for (i = 0; d->prefix[i] != NULL; i++)
             if (strcasecmp(d->prefix[i], spec) == 0) {
-                DEBUGMSGTL(("tdomain", "specifier \"%s\" matched\n",
-                            spec));
-                t = d->f_create_from_tstring(addr, local);
-                free(mystring);
-                return t;
+                DEBUGMSGTL(("tdomain",
+                            "Found domain \"%s\" from specifier \"%s\"\n",
+                            d->prefix[0], spec));
+                return d;
             }
+    }
+    DEBUGMSGTL(("tdomain", "Found no domain from specifier \"%s\"\n", spec));
+    return NULL;
+}
+
+static int
+netsnmp_is_fqdn(const char *thename)
+{
+    if (!thename)
+        return 0;
+    while(*thename) {
+        if (*thename != '.' && !isupper((unsigned char)*thename) &&
+            !islower((unsigned char)*thename) &&
+            !isdigit((unsigned char)*thename) && *thename != '-') {
+            return 0;
+        }
+        thename++;
+    }
+    return 1;
+}
+
+/*
+ * Locate the appropriate transport domain and call the create function for
+ * it.
+ */
+netsnmp_transport *
+netsnmp_tdomain_transport_full(const char *application,
+                               const char *str, int local,
+                               const char *default_domain,
+                               const char *default_target)
+{
+    netsnmp_tdomain    *match = NULL;
+    const char         *addr = NULL;
+    const char * const *spec = NULL;
+    int                 any_found = 0;
+    char buf[SNMP_MAXPATH];
+    extern const char *curfilename;		/* from read_config.c */
+    const char        *prev_curfilename;
+
+    prev_curfilename = curfilename;
+
+    DEBUGMSGTL(("tdomain",
+                "tdomain_transport_full(\"%s\", \"%s\", %d, \"%s\", \"%s\")\n",
+                application, str ? str : "[NIL]", local,
+                default_domain ? default_domain : "[NIL]",
+                default_target ? default_target : "[NIL]"));
+
+    /* see if we can load a host-name specific set of conf files */
+    if (!netsnmp_ds_get_boolean(NETSNMP_DS_LIBRARY_ID,
+                                NETSNMP_DS_LIB_DONT_LOAD_HOST_FILES) &&
+        netsnmp_is_fqdn(str)) {
+        static int have_added_handler = 0;
+        char *newhost;
+        struct config_line *config_handlers;
+        struct config_files file_names;
+        char *prev_hostname;
+
+        /* register a "transport" specifier */
+        if (!have_added_handler) {
+            have_added_handler = 1;
+            netsnmp_ds_register_config(ASN_OCTET_STR,
+                                       "snmp", "transport",
+                                       NETSNMP_DS_LIBRARY_ID,
+                                       NETSNMP_DS_LIB_HOSTNAME);
+        }
+
+        /* we save on specific setting that we don't allow to change
+           from one transport creation to the next; ie, we don't want
+           the "transport" specifier to be a default.  It should be a
+           single invocation use only */
+        prev_hostname = netsnmp_ds_get_string(NETSNMP_DS_LIBRARY_ID,
+                                              NETSNMP_DS_LIB_HOSTNAME);
+        if (prev_hostname)
+            prev_hostname = strdup(prev_hostname);
+
+        /* read in the hosts/STRING.conf files */
+        config_handlers = read_config_get_handlers("snmp");
+        snprintf(buf, sizeof(buf)-1, "hosts/%s", str);
+        file_names.fileHeader = buf;
+        file_names.start = config_handlers;
+        file_names.next = NULL;
+        DEBUGMSGTL(("tdomain", "checking for host specific config %s\n",
+                    buf));
+        read_config_files_of_type(EITHER_CONFIG, &file_names);
+
+        if (NULL !=
+            (newhost = netsnmp_ds_get_string(NETSNMP_DS_LIBRARY_ID,
+                                             NETSNMP_DS_LIB_HOSTNAME))) {
+            strlcpy(buf, newhost, sizeof(buf));
+            str = buf;
+        }
+
+        netsnmp_ds_set_string(NETSNMP_DS_LIBRARY_ID,
+                              NETSNMP_DS_LIB_HOSTNAME,
+                              prev_hostname);
+        SNMP_FREE(prev_hostname);
+    }
+
+    /* First try - assume that there is a domain in str (domain:target) */
+
+    if (str != NULL) {
+        const char *cp;
+        if ((cp = strchr(str, ':')) != NULL) {
+            char* mystring = (char*)malloc(cp + 1 - str);
+            memcpy(mystring, str, cp - str);
+            mystring[cp - str] = '\0';
+            addr = cp + 1;
+
+            match = find_tdomain(mystring);
+            free(mystring);
         }
     }
 
     /*
-     * Okay no match so far.  Consider the possibility that we have something
-     * like hostname.domain.com:port which will have confused the parser above.
-     * Try and match again with the appropriate default domain.  
+     * Second try, if there is no domain in str (target), then try the
+     * default domain
      */
 
-    if (default_domain) {
-        spec = default_domain;
-    } else {
-        spec = "udp";
-    }
-    if (cp) {
-        *cp = ':';
-    }
-
-    addr = mystring;
-    DEBUGMSGTL(("tdomain",
-                "try again with specifier \"%s\" address \"%s\"\n", spec,
-                addr));
-
-    for (d = domain_list; d != NULL; d = d->next) {
-        for (i = 0; d->prefix[i] != NULL; i++) {
-            if (strcmp(d->prefix[i], spec) == 0) {
-                DEBUGMSGTL(("tdomain", "specifier \"%s\" matched\n",
-                            spec));
-                t = d->f_create_from_tstring(addr, local);
-                free(mystring);
-                return t;
+    if (match == NULL) {
+        addr = str;
+        if (addr && *addr == '/') {
+            DEBUGMSGTL(("tdomain",
+                        "Address starts with '/', so assume \"unix\" "
+                        "domain\n"));
+            match = find_tdomain("unix");
+        } else if (default_domain) {
+            DEBUGMSGTL(("tdomain",
+                        "Use user specified default domain \"%s\"\n",
+                        default_domain));
+            match = find_tdomain(default_domain);
+        } else {
+            spec = netsnmp_lookup_default_domains(application);
+            if (spec == NULL) {
+                DEBUGMSGTL(("tdomain",
+                            "No default domain found, assume \"udp\"\n"));
+                match = find_tdomain("udp");
+            } else {
+                const char * const * r = spec;
+                DEBUGMSGTL(("tdomain",
+                            "Use application default domains"));
+                while(*r) {
+                    DEBUGMSG(("tdomain", " \"%s\"", *r));
+                    ++r;
+                }
+                DEBUGMSG(("tdomain", "\n"));
             }
         }
     }
 
-    snmp_log(LOG_ERR, "No support for requested transport domain \"%s\"\n",
-             spec);
-    free(mystring);
+    for(;;) {
+        if (match) {
+            netsnmp_transport *t = NULL;
+            const char* addr2;
+
+            any_found = 1;
+            /*
+             * Ok, we know what domain to try, lets see what default data
+             * should be used with it
+             */
+            if (default_target != NULL)
+                addr2 = default_target;
+            else
+                addr2 = netsnmp_lookup_default_target(application,
+                                                      match->prefix[0]);
+            DEBUGMSGTL(("tdomain",
+                        "trying domain \"%s\" address \"%s\" "
+                        "default address \"%s\"\n",
+                        match->prefix[0], addr ? addr : "[NIL]",
+                        addr2 ? addr2 : "[NIL]"));
+            if (match->f_create_from_tstring)
+                t = match->f_create_from_tstring(addr, local);
+            else
+                t = match->f_create_from_tstring_new(addr, local, addr2);
+            if (t) {
+                curfilename = prev_curfilename;
+                return t;
+            }
+        }
+        addr = str;
+        if (spec && *spec)
+            match = find_tdomain(*spec++);
+        else
+            break;
+    }
+    if (!any_found)
+        snmp_log(LOG_ERR, "No support for any checked transport domain\n");
+    curfilename = prev_curfilename;
     return NULL;
+}
+
+
+netsnmp_transport *
+netsnmp_tdomain_transport(const char *str, int local,
+			  const char *default_domain)
+{
+    return netsnmp_tdomain_transport_full("snmp", str, local, default_domain,
+					  NULL);
 }
 
 
@@ -400,6 +655,23 @@ netsnmp_tdomain_transport_oid(const oid * dom,
     return NULL;
 }
 
+netsnmp_transport*
+netsnmp_transport_open(const char* application, const char* str, int local)
+{
+    return netsnmp_tdomain_transport_full(application, str, local, NULL, NULL);
+}
+
+netsnmp_transport*
+netsnmp_transport_open_server(const char* application, const char* str)
+{
+    return netsnmp_tdomain_transport_full(application, str, 1, NULL, NULL);
+}
+
+netsnmp_transport*
+netsnmp_transport_open_client(const char* application, const char* str)
+{
+    return netsnmp_tdomain_transport_full(application, str, 0, NULL, NULL);
+}
 
 /** adds a transport to a linked list of transports.
     Returns 1 on failure, 0 on success */
@@ -443,7 +715,22 @@ netsnmp_transport_remove_from_list(netsnmp_transport_list **transport_list,
     else
         *transport_list = ptr->next;
 
-    free(ptr);
+    SNMP_FREE(ptr);
 
     return 0;
+}
+
+int
+netsnmp_transport_config_compare(netsnmp_transport_config *left,
+                                 netsnmp_transport_config *right) {
+    return strcmp(left->key, right->key);
+}
+
+netsnmp_transport_config *
+netsnmp_transport_create_config(char *key, char *value) {
+    netsnmp_transport_config *entry =
+        SNMP_MALLOC_TYPEDEF(netsnmp_transport_config);
+    entry->key = strdup(key);
+    entry->value = strdup(value);
+    return entry;
 }

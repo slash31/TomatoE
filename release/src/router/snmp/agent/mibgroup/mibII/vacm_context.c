@@ -92,8 +92,12 @@ init_vacm_context(void)
     table_info = SNMP_MALLOC_TYPEDEF(netsnmp_table_registration_info);
     iinfo = SNMP_MALLOC_TYPEDEF(netsnmp_iterator_info);
 
-    if (!table_info || !iinfo)
+    if (!table_info || !iinfo) {
+        SNMP_FREE(table_info);
+        SNMP_FREE(iinfo);
+        SNMP_FREE(my_handler);
         return;
+    }
 
     netsnmp_table_helper_add_index(table_info, ASN_OCTET_STR)
         table_info->min_column = 1;
@@ -116,7 +120,7 @@ vacm_context_handler(netsnmp_mib_handler *handler,
 {
     subtree_context_cache *context_ptr;
 
-    while (requests) {
+    for(; requests; requests = requests->next) {
         netsnmp_variable_list *var = requests->requestvb;
 
         if (requests->processed != 0)
@@ -129,7 +133,6 @@ vacm_context_handler(netsnmp_mib_handler *handler,
         if (context_ptr == NULL) {
             snmp_log(LOG_ERR,
                      "vacm_context_handler called without data\n");
-            requests = requests->next;
             continue;
         }
 
@@ -159,8 +162,6 @@ vacm_context_handler(netsnmp_mib_handler *handler,
 
 
         }
-
-        requests = requests->next;
     }
 
     return SNMP_ERR_NOERROR;

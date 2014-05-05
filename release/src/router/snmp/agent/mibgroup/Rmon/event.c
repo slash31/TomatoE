@@ -18,16 +18,28 @@
  * SOFTWARE.
  ******************************************************************/
 
+#include <net-snmp/net-snmp-config.h>
+
+#if HAVE_STDLIB_H
 #include <stdlib.h>
-#include <sys/time.h>
+#endif
+#if TIME_WITH_SYS_TIME
+# include <sys/time.h>
+# include <time.h>
+#else
+# if HAVE_SYS_TIME_H
+#  include <sys/time.h>
+# else
+#  include <time.h>
+# endif
+#endif
+#if HAVE_UNISTD_H
 #include <unistd.h>
+#endif
 #include <ctype.h>
 
-#include <net-snmp/net-snmp-config.h>
 #include <net-snmp/net-snmp-includes.h>
 #include <net-snmp/agent/net-snmp-agent-includes.h>
-
-#include "util_funcs.h"
 
 #include "event.h"
 
@@ -113,6 +125,7 @@ typedef struct {
 
 static TABLE_DEFINTION_T EventCtrlTable;
 static TABLE_DEFINTION_T *table_ptr = &EventCtrlTable;
+static unsigned char zero_octet_string[1];
 
 /*
  * Control Table RowApi Callbacks 
@@ -218,7 +231,7 @@ event_Activate(RMON_ENTRY_T * eptr)
 
     ROWDATAAPI_set_size(&body->scrlr,
                         body->scrlr.data_requested,
-                        RMON1_ENTRY_VALID == eptr->status);
+                        (u_char)(RMON1_ENTRY_VALID == eptr->status) );
 
     return 0;
 }
@@ -247,7 +260,6 @@ write_eventControl(int action, u_char * var_val, u_char var_val_type,
     static int      prev_action = COMMIT;
     RMON_ENTRY_T   *hdr;
     CRTL_ENTRY_T   *cloned_body;
-    CRTL_ENTRY_T   *body;
 
     switch (action) {
     case RESERVE1:
@@ -268,7 +280,6 @@ write_eventControl(int action, u_char * var_val, u_char var_val_type,
         leaf_id = (int) name[eventEntryFirstIndexBegin - 1];
         hdr = ROWAPI_find(table_ptr, long_temp);        /* it MUST be OK */
         cloned_body = (CRTL_ENTRY_T *) hdr->tmp;
-        body = (CRTL_ENTRY_T *) hdr->body;
         switch (leaf_id) {
         case Leaf_event_description:
             char_temp = AGMALLOC(1 + MAX_event_description);
@@ -391,7 +402,7 @@ var_eventTable(struct variable *vp,
             return (unsigned char *) theEntry.event_description;
         } else {
             *var_len = 0;
-            return (unsigned char *) "";
+            return zero_octet_string;
         }
     case EVENTTYPE:
         long_ret = theEntry.event_type;
@@ -402,7 +413,7 @@ var_eventTable(struct variable *vp,
             return (unsigned char *) theEntry.event_community;
         } else {
             *var_len = 0;
-            return (unsigned char *) "";
+            return zero_octet_string;
         }
     case EVENTLASTTIMESENT:
         long_ret = theEntry.event_last_time_sent;
@@ -413,7 +424,7 @@ var_eventTable(struct variable *vp,
             return (unsigned char *) hdr->owner;
         } else {
             *var_len = 0;
-            return (unsigned char *) "";
+            return zero_octet_string;
         }
     case EVENTSTATUS:
         long_ret = hdr->status;
@@ -442,7 +453,6 @@ var_logTable(struct variable *vp,
     static long     long_ret;
     static DATA_ENTRY_T theEntry;
     RMON_ENTRY_T   *hdr;
-    CRTL_ENTRY_T   *ctrl;
 
     *write_method = NULL;
     hdr = ROWDATAAPI_header_DataEntry(vp, name, length, exact, var_len,
@@ -451,8 +461,6 @@ var_logTable(struct variable *vp,
                                       sizeof(DATA_ENTRY_T), &theEntry);
     if (!hdr)
         return NULL;
-
-    ctrl = (CRTL_ENTRY_T *) hdr->body;
 
     *var_len = sizeof(long);    /* default */
 
@@ -472,7 +480,7 @@ var_logTable(struct variable *vp,
             return (unsigned char *) theEntry.log_description;
         } else {
             *var_len = 0;
-            return (unsigned char *) "";
+            return zero_octet_string;
         }
     default:
         ERROR_MSG("");
@@ -538,9 +546,6 @@ create_explanaition(CRTL_ENTRY_T * evptr, u_char is_rising,
     strcat(descr, expl);
     return descr;
 }
-
-extern void     send_enterprise_trap_vars(int, int, oid *, int,
-                                          netsnmp_variable_list *);
 
 static netsnmp_variable_list *
 oa_bind_var(netsnmp_variable_list * prev,
@@ -638,6 +643,8 @@ event_save_log(CRTL_ENTRY_T * body, char *event_descr)
     }
 
     lptr->log_time = body->event_last_time_sent;
+    if (lptr->log_description)
+        AGFREE(lptr->log_description);
     lptr->log_description = AGSTRDUP(event_descr);
     lptr->data_index = ROWDATAAPI_get_total_number(&body->scrlr);
 
@@ -769,23 +776,34 @@ struct variable2 eventTable_variables[] = {
     /*
      * magic number        , variable type, ro/rw , callback fn  ,           L, oidsuffix 
      */
-    {EVENTINDEX, ASN_INTEGER, RONLY, var_eventTable, 2, {1, 1}},
-    {EVENTDESCRIPTION, ASN_OCTET_STR, RWRITE, var_eventTable, 2, {1, 2}},
-    {EVENTTYPE, ASN_INTEGER, RWRITE, var_eventTable, 2, {1, 3}},
-    {EVENTCOMMUNITY, ASN_OCTET_STR, RWRITE, var_eventTable, 2, {1, 4}},
-    {EVENTLASTTIMESENT, ASN_TIMETICKS, RONLY, var_eventTable, 2, {1, 5}},
-    {EVENTOWNER, ASN_OCTET_STR, RWRITE, var_eventTable, 2, {1, 6}},
-    {EVENTSTATUS, ASN_INTEGER, RWRITE, var_eventTable, 2, {1, 7}}
+    {EVENTINDEX, ASN_INTEGER, NETSNMP_OLDAPI_RONLY,
+     var_eventTable, 2, {1, 1}},
+    {EVENTDESCRIPTION, ASN_OCTET_STR, NETSNMP_OLDAPI_RWRITE,
+     var_eventTable, 2, {1, 2}},
+    {EVENTTYPE, ASN_INTEGER, NETSNMP_OLDAPI_RWRITE,
+     var_eventTable, 2, {1, 3}},
+    {EVENTCOMMUNITY, ASN_OCTET_STR, NETSNMP_OLDAPI_RWRITE,
+     var_eventTable, 2, {1, 4}},
+    {EVENTLASTTIMESENT, ASN_TIMETICKS, NETSNMP_OLDAPI_RONLY,
+     var_eventTable, 2, {1, 5}},
+    {EVENTOWNER, ASN_OCTET_STR, NETSNMP_OLDAPI_RWRITE,
+     var_eventTable, 2, {1, 6}},
+    {EVENTSTATUS, ASN_INTEGER, NETSNMP_OLDAPI_RWRITE,
+     var_eventTable, 2, {1, 7}}
 };
 
 struct variable2 logTable_variables[] = {
     /*
      * magic number        , variable type, ro/rw , callback fn  ,           L, oidsuffix 
      */
-    {LOGEVENTINDEX, ASN_INTEGER, RONLY, var_logTable, 2, {1, 1}},
-    {LOGINDEX, ASN_INTEGER, RONLY, var_logTable, 2, {1, 2}},
-    {LOGTIME, ASN_TIMETICKS, RONLY, var_logTable, 2, {1, 3}},
-    {LOGDESCRIPTION, ASN_OCTET_STR, RONLY, var_logTable, 2, {1, 4}}
+    {LOGEVENTINDEX, ASN_INTEGER, NETSNMP_OLDAPI_RONLY,
+     var_logTable, 2, {1, 1}},
+    {LOGINDEX, ASN_INTEGER, NETSNMP_OLDAPI_RONLY,
+     var_logTable, 2, {1, 2}},
+    {LOGTIME, ASN_TIMETICKS, NETSNMP_OLDAPI_RONLY,
+     var_logTable, 2, {1, 3}},
+    {LOGDESCRIPTION, ASN_OCTET_STR, NETSNMP_OLDAPI_RONLY,
+     var_logTable, 2, {1, 4}}
 
 };
 

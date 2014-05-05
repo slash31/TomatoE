@@ -140,7 +140,7 @@
 /* #undef PACKAGE */
 
 /* Define to the host we are compiling for.  */
-#define HOST "debian"
+#define HOST "redhat"
 
 /* Define the default pid files directory. */
 #define PIDDIR "/var/run"

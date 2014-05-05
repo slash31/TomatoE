@@ -1,0 +1,11 @@
+prefix=/home/aaronfinney/Documents/TomatoE/release/src-rt/router/e2fsprogs/staged
+exec_prefix=${prefix}
+libdir=${exec_prefix}/lib
+includedir=${prefix}/include
+
+Name: blkid
+Description: Block device id library
+Version: 1.41.9
+Requires.private: uuid
+Cflags: -I${includedir}/blkid
+Libs: -L${libdir} -lblkid

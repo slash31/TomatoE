@@ -1,27 +1,18 @@
 #include <net-snmp/net-snmp-config.h>
 
-#if HAVE_STRING_H
-#include <string.h>
-#else
-#include <strings.h>
-#endif
-
 #include <net-snmp/net-snmp-includes.h>
 #include <net-snmp/agent/net-snmp-agent-includes.h>
 
 #include <net-snmp/agent/read_only.h>
 
-#if HAVE_DMALLOC_H
-#include <dmalloc.h>
-#endif
-
-/** @defgroup read_only read_only: make your handler read_only automatically 
+/** @defgroup read_only read_only
+ *  Make your handler read_only automatically 
  *  The only purpose of this handler is to return an
  *  appropriate error for any requests passed to it in a SET mode.
  *  Inserting it into your handler chain will ensure you're never
  *  asked to perform a SET request so you can ignore those error
  *  conditions.
- *  @ingroup handler
+ *  @ingroup utilities
  *  @{
  */
 
@@ -31,7 +22,14 @@
 netsnmp_mib_handler *
 netsnmp_get_read_only_handler(void)
 {
-    return netsnmp_create_handler("read_only", netsnmp_read_only_helper);
+    netsnmp_mib_handler *ret = NULL;
+    
+    ret = netsnmp_create_handler("read_only",
+                                 netsnmp_read_only_helper);
+    if (ret) {
+        ret->flags |= MIB_HANDLER_AUTO_NEXT;
+    }
+    return ret;
 }
 
 /** @internal Implements the read_only handler */
@@ -52,15 +50,18 @@ netsnmp_read_only_helper(netsnmp_mib_handler *handler,
     case MODE_SET_COMMIT:
     case MODE_SET_FREE:
     case MODE_SET_UNDO:
-        netsnmp_set_all_requests_error(reqinfo, requests,
-                                       SNMP_ERR_NOTWRITABLE);
-        return SNMP_ERR_NOERROR;
+        netsnmp_request_set_error_all(requests, SNMP_ERR_NOTWRITABLE);
+        return SNMP_ERR_NOTWRITABLE;
 
-    default:
-        return netsnmp_call_next_handler(handler, reginfo, reqinfo,
-                                         requests);
+    case MODE_GET:
+    case MODE_GETNEXT:
+    case MODE_GETBULK:
+        /* next handler called automatically - 'AUTO_NEXT' */
+        return SNMP_ERR_NOERROR;
     }
-    return SNMP_ERR_GENERR;     /* should never get here */
+
+    netsnmp_request_set_error_all(requests, SNMP_ERR_GENERR);
+    return SNMP_ERR_GENERR;
 }
 
 /** initializes the read_only helper which then registers a read_only
@@ -73,3 +74,5 @@ netsnmp_init_read_only_helper(void)
     netsnmp_register_handler_by_name("read_only",
                                      netsnmp_get_read_only_handler());
 }
+/**  @} */
+

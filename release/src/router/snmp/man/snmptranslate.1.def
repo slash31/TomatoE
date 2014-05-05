@@ -27,10 +27,9 @@
 .\" Use is subject to license terms specified in the COPYING file
 .\" distributed with the Net-SNMP package.
 .\" ******************************************************************/
-.TH SNMPTRANSLATE 1 "25 Jul 2003" VVERSIONINFO "Net-SNMP"
-.UC 4
+.TH SNMPTRANSLATE 1 "20 Jul 2010" VVERSIONINFO "Net-SNMP"
 .SH NAME
-snmptranslate - translate SNMP OID values into more useful information
+snmptranslate - translate MIB OID names between numeric and textual forms
 .SH SYNOPSIS
 .B snmptranslate
 [OPTIONS] OID [OID]...
@@ -43,7 +42,7 @@ values from their symbolic (textual) forms into their numerical forms
 OID is either a numeric or textual object identifier.
 .SH OPTIONS
 .TP 8
-.B -D \fITOKEN[,...]
+.B -D\fI[TOKEN[,...]]
 Turn on debugging output for the given
 .IR "TOKEN" "(s)."
 Try
@@ -94,6 +93,9 @@ Dump a symbolic form of all objects.
 .TP
 .B \-Tt
 Dump a tree form of the loaded MIBs (mostly useful for debugging).
+.TP
+.B \-Tz
+Dump a numeric and labeled form of all objects (compatible with MIB2SCHEMA format).
 .RE
 .TP
 .B -V

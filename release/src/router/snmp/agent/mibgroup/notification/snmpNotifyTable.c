@@ -10,9 +10,6 @@
 #include <net-snmp/net-snmp-config.h>
 
 #include <sys/types.h>
-#if HAVE_WINSOCK_H
-#include <winsock.h>
-#endif
 #if HAVE_STDLIB_H
 #include <stdlib.h>
 #endif
@@ -30,11 +27,19 @@
 
 #include "header_complex.h"
 #include "snmpNotifyTable.h"
+#include "snmpNotifyFilterProfileTable.h"
 #include "target/snmpTargetParamsEntry.h"
 #include "target/snmpTargetAddrEntry.h"
 #include "target/target.h"
+#include "snmp-notification-mib/snmpNotifyFilterTable/snmpNotifyFilterTable.h"
 #include <net-snmp/agent/agent_callbacks.h>
 #include <net-snmp/agent/agent_trap.h>
+#include <net-snmp/agent/mib_module_config.h>
+#include "net-snmp/agent/sysORTable.h"
+
+#ifdef USING_NOTIFICATION_LOG_MIB_NOTIFICATION_LOG_MODULE
+#   include "notification-log-mib/notification_log.h"
+#endif
 
 SNMPCallback    store_snmpNotifyTable;
 
@@ -49,6 +54,14 @@ SNMPCallback    store_snmpNotifyTable;
 oid             snmpNotifyTable_variables_oid[] =
     { 1, 3, 6, 1, 6, 3, 13, 1, 1 };
 
+static oid snmpNotifyFullCompliance[] =
+    { SNMP_OID_SNMPMODULES, 13, 3, 1, 3 }; /* SNMP-NOTIFICATION-MIB::snmpNotifyFullCompliance */
+
+void shutdown_snmpNotifyTable(void)
+{
+    UNREGISTER_SYSOR_ENTRY(snmpNotifyFullCompliance);
+}
+
 
 /*
  * variable2 snmpNotifyTable_variables:
@@ -62,15 +75,17 @@ struct variable2 snmpNotifyTable_variables[] = {
      * magic number        , variable type , ro/rw , callback fn  , L, oidsuffix 
      */
 #define   SNMPNOTIFYTAG         4
-    {SNMPNOTIFYTAG, ASN_OCTET_STR, RWRITE, var_snmpNotifyTable, 2, {1, 2}},
+    {SNMPNOTIFYTAG, ASN_OCTET_STR, NETSNMP_OLDAPI_RWRITE,
+     var_snmpNotifyTable, 2, {1, 2}},
 #define   SNMPNOTIFYTYPE        5
-    {SNMPNOTIFYTYPE, ASN_INTEGER, RWRITE, var_snmpNotifyTable, 2, {1, 3}},
+    {SNMPNOTIFYTYPE, ASN_INTEGER, NETSNMP_OLDAPI_RWRITE,
+     var_snmpNotifyTable, 2, {1, 3}},
 #define   SNMPNOTIFYSTORAGETYPE  6
-    {SNMPNOTIFYSTORAGETYPE, ASN_INTEGER, RWRITE, var_snmpNotifyTable, 2,
-     {1, 4}},
+    {SNMPNOTIFYSTORAGETYPE, ASN_INTEGER, NETSNMP_OLDAPI_RWRITE,
+     var_snmpNotifyTable, 2, {1, 4}},
 #define   SNMPNOTIFYROWSTATUS   7
-    {SNMPNOTIFYROWSTATUS, ASN_INTEGER, RWRITE, var_snmpNotifyTable, 2,
-     {1, 5}},
+    {SNMPNOTIFYROWSTATUS, ASN_INTEGER, NETSNMP_OLDAPI_RWRITE,
+     var_snmpNotifyTable, 2, {1, 5}},
 
 };
 /*
@@ -83,6 +98,117 @@ struct variable2 snmpNotifyTable_variables[] = {
  */
 static struct header_complex_index *snmpNotifyTableStorage = NULL;
 
+static int
+_checkFilter(const char* paramName, netsnmp_pdu *pdu)
+{
+    /*
+     * find appropriate filterProfileEntry
+     */
+    netsnmp_variable_list *var, *trap_var;
+    char                  *profileName;
+    size_t                 profileNameLen;
+    struct vacm_viewEntry *vp, *head;
+    int                    vb_oid_excluded = 0;
+    extern const oid       snmptrap_oid[];
+    extern const size_t    snmptrap_oid_len;
+
+    netsnmp_assert(NULL != paramName);
+    netsnmp_assert(NULL != pdu);
+
+    DEBUGMSGTL(("send_notifications", "checking filters...\n"));
+
+    /*
+   A notification originator uses the snmpNotifyFilterTable to filter
+   notifications.  A notification filter profile may be associated with
+   a particular entry in the snmpTargetParamsTable.  The associated
+   filter profile is identified by an entry in the
+   snmpNotifyFilterProfileTable whose index is equal to the index of the
+   entry in the snmpTargetParamsTable.  If no such entry exists in the
+   snmpNotifyFilterProfileTable, no filtering is performed for that
+   management target.
+    */
+    profileName = get_FilterProfileName(paramName, strlen(paramName),
+                                        &profileNameLen);
+    if (NULL == profileName) {
+        DEBUGMSGTL(("send_notifications", "  no matching profile\n"));
+        return 0;
+    }
+
+    /*
+   If such an entry does exist, the value of snmpNotifyFilterProfileName
+   of the entry is compared with the corresponding portion of the index
+   of all active entries in the snmpNotifyFilterTable.  All such entries
+   for which this comparison results in an exact match are used for
+   filtering a notification generated using the associated
+   snmpTargetParamsEntry.  If no such entries exist, no filtering is
+   performed, and a notification may be sent to the management target.
+    */
+    head = snmpNotifyFilterTable_vacm_view_subtree(profileName);
+    if (NULL == head) {
+        DEBUGMSGTL(("send_notifications", "  no matching filters\n"));
+        return 0;
+    }
+
+    /*
+   Otherwise, if matching entries do exist, a notification may be sent
+   if the NOTIFICATION-TYPE OBJECT IDENTIFIER of the notification (this
+   is the value of the element of the variable bindings whose name is
+   snmpTrapOID.0, i.e., the second variable binding) is specifically
+   included, and none of the object instances to be included in the
+   variable-bindings of the notification are specifically excluded by
+   the matching entries.
+     */
+    trap_var = find_varbind_in_list( pdu->variables,
+                                snmptrap_oid,
+                                snmptrap_oid_len);
+    if (NULL != trap_var) {
+        /*
+                             For a notification name, if none match,
+   then the notification name is considered excluded, and the
+   notification should not be sent to this management target.
+         */
+        vp = netsnmp_view_get(head, profileName, trap_var->val.objid,
+                              trap_var->val_len / sizeof(oid), VACM_MODE_FIND);
+        if ((NULL == vp) || (SNMP_VIEW_INCLUDED != vp->viewType)) {
+            DEBUGMSGTL(("send_notifications", "  filtered (snmpTrapOID.0 "));
+            DEBUGMSGOID(("send_notifications",trap_var->val.objid,
+                         trap_var->val_len / sizeof(oid)));
+            DEBUGMSG(("send_notifications", " not included)\n"));
+            free(head);
+            return 1;
+        }
+    }
+
+    /*
+     * check varbinds
+     */
+    for(var = pdu->variables; var; var = var->next_variable) {
+        /*
+                                                               For an
+   object instance, if none match, the object instance is considered
+   included, and the notification may be sent to this management target.
+         */
+
+        if (var == trap_var) {
+            continue;
+        }
+
+        vp = netsnmp_view_get(head, profileName, var->name,
+                              var->name_length, VACM_MODE_FIND);
+        if ((NULL != vp) && (SNMP_VIEW_EXCLUDED == vp->viewType)) {
+            DEBUGMSGTL(("send_notifications","  filtered (varbind "));
+            DEBUGMSGOID(("send_notifications",var->name, var->name_length));
+            DEBUGMSG(("send_notifications", " excluded)\n"));
+            vb_oid_excluded = 1;
+            break;
+        }
+    }
+
+    free(head);
+
+    return vb_oid_excluded;
+}
+
 int
 send_notifications(int major, int minor, void *serverarg, void *clientarg)
 {
@@ -90,8 +216,9 @@ send_notifications(int major, int minor, void *serverarg, void *clientarg)
     struct snmpNotifyTable_data *nptr;
     netsnmp_session *sess, *sptr;
     netsnmp_pdu    *template_pdu = (netsnmp_pdu *) serverarg;
+    int             count = 0, send = 0;
 
-    DEBUGMSGTL(("send_notifications", "starting: pdu=%x, vars=%x\n",
+    DEBUGMSGTL(("send_notifications", "starting: pdu=%p, vars=%p\n",
                 template_pdu, template_pdu->variables));
 
     for (hptr = snmpNotifyTableStorage; hptr; hptr = hptr->next) {
@@ -104,24 +231,48 @@ send_notifications(int major, int minor, void *serverarg, void *clientarg)
         sess = get_target_sessions(nptr->snmpNotifyTag, NULL, NULL);
 
         /*
-         * XXX: filter appropriately 
+         * filter appropriately, per section 6 of RFC 3413
          */
 
         for (sptr = sess; sptr; sptr = sptr->next) {
+            send = 0;
+#ifndef NETSNMP_DISABLE_SNMPV1
             if (sptr->version == SNMP_VERSION_1 &&
                 minor == SNMPD_CALLBACK_SEND_TRAP1) {
-                send_trap_to_sess(sptr, template_pdu);
-            } else if (sptr->version != SNMP_VERSION_1 &&
-                       minor == SNMPD_CALLBACK_SEND_TRAP2) {
+                send = 1;
+            } else
+#endif
+            if ((sptr->version == SNMP_VERSION_3
+#ifndef NETSNMP_DISABLE_SNMPV2C
+                 || sptr->version == SNMP_VERSION_2c
+#endif
+                ) && minor == SNMPD_CALLBACK_SEND_TRAP2) {
                 if (nptr->snmpNotifyType == SNMPNOTIFYTYPE_INFORM) {
                     template_pdu->command = SNMP_MSG_INFORM;
                 } else {
                     template_pdu->command = SNMP_MSG_TRAP2;
                 }
-                send_trap_to_sess(sptr, template_pdu);
+                send = 1;
             }
-        }
-    }
+            if (send && sess->paramName) {
+                int filter = _checkFilter(sess->paramName, template_pdu);
+                if (filter)
+                    send = 0;
+            }
+            if (send) {
+                send_trap_to_sess(sptr, template_pdu);
+                ++count;
+            } /* session to send to */
+        } /* for(sptr) */
+    } /* for(hptr) */
+
+    DEBUGMSGTL(("send_notifications", "sent %d notifications\n", count));
+
+#ifdef USING_NOTIFICATION_LOG_MIB_NOTIFICATION_LOG_MODULE
+    if (count)
+        log_notification(template_pdu, NULL);
+#endif
+
     return 0;
 }
 
@@ -166,9 +317,15 @@ notifyTable_register_notifications(int major, int minor,
     /*
      * address 
      */
+    t = snmp_sess_transport(snmp_sess_pointer(ss));
+    if (!t) {
+        snmp_log(LOG_ERR,
+                "Cannot add new trap destination, transport is closed.");
+        snmp_sess_close(ss);
+        return 0;
+    }
     ptr = snmpTargetAddrTable_create();
     ptr->name = strdup(buf);
-    t = snmp_sess_transport(snmp_sess_pointer(ss));
     memcpy(ptr->tDomain, t->domain, t->domain_length * sizeof(oid));
     ptr->tDomainLen = t->domain_length;
     ptr->tAddressLen = t->remote_length;
@@ -195,21 +352,35 @@ notifyTable_register_notifications(int major, int minor,
         pptr->secModel = ss->securityModel;
         pptr->secLevel = ss->securityLevel;
         pptr->secName = (char *) malloc(ss->securityNameLen + 1);
+        if (pptr->secName == NULL) {
+            snmpTargetParamTable_dispose(pptr);
+            return 0;
+        }
         memcpy((void *) pptr->secName, (void *) ss->securityName,
                ss->securityNameLen);
         pptr->secName[ss->securityNameLen] = 0;
-    } else {
-        pptr->secModel = ss->version == SNMP_VERSION_1 ?
-            SNMP_SEC_MODEL_SNMPv1 : SNMP_SEC_MODEL_SNMPv2c;
+    }
+#if !defined(NETSNMP_DISABLE_SNMPV1) || !defined(NETSNMP_DISABLE_SNMPV2C)
+       else {
+        pptr->secModel = 
+#ifndef NETSNMP_DISABLE_SNMPV1
+            ss->version == SNMP_VERSION_1 ?  SNMP_SEC_MODEL_SNMPv1 : 
+#endif
+                                             SNMP_SEC_MODEL_SNMPv2c;
         pptr->secLevel = SNMP_SEC_LEVEL_NOAUTH;
         pptr->secName = NULL;
         if (ss->community && (ss->community_len > 0)) {
             pptr->secName = (char *) malloc(ss->community_len + 1);
+            if (pptr->secName == NULL) {
+                snmpTargetParamTable_dispose(pptr);
+                return 0;
+            }
             memcpy((void *) pptr->secName, (void *) ss->community,
                    ss->community_len);
             pptr->secName[ss->community_len] = 0;
         }
     }
+#endif
     pptr->storageType = ST_READONLY;
     pptr->rowStatus = RS_ACTIVE;
     snmpTargetParamTable_add(pptr);
@@ -221,6 +392,8 @@ notifyTable_register_notifications(int major, int minor,
      * notify table 
      */
     nptr = SNMP_MALLOC_STRUCT(snmpNotifyTable_data);
+    if (nptr == NULL)
+        return 0;
     nptr->snmpNotifyName = strdup(buf);
     nptr->snmpNotifyNameLen = strlen(buf);
     nptr->snmpNotifyTag = strdup(buf);
@@ -293,9 +466,11 @@ init_snmpNotifyTable(void)
     snmp_register_callback(SNMP_CALLBACK_LIBRARY, SNMP_CALLBACK_STORE_DATA,
                            store_snmpNotifyTable, NULL);
 
+#ifndef DISABLE_SNMPV1
     snmp_register_callback(SNMP_CALLBACK_APPLICATION,
                            SNMPD_CALLBACK_SEND_TRAP1, send_notifications,
                            NULL);
+#endif
     snmp_register_callback(SNMP_CALLBACK_APPLICATION,
                            SNMPD_CALLBACK_SEND_TRAP2, send_notifications,
                            NULL);
@@ -310,6 +485,8 @@ init_snmpNotifyTable(void)
      * place any other initialization junk you need here 
      */
 
+    REGISTER_SYSOR_ENTRY(snmpNotifyFullCompliance,
+        "The MIB modules for managing SNMP Notification, plus filtering.");
 
     DEBUGMSGTL(("snmpNotifyTable", "done.\n"));
 }
@@ -370,6 +547,7 @@ parse_snmpNotifyTable(const char *token, char *line)
                               &StorageTmp->snmpNotifyNameLen);
     if (StorageTmp->snmpNotifyName == NULL) {
         config_perror("invalid specification for snmpNotifyName");
+        SNMP_FREE(StorageTmp);
         return;
     }
 
@@ -379,6 +557,7 @@ parse_snmpNotifyTable(const char *token, char *line)
                               &StorageTmp->snmpNotifyTagLen);
     if (StorageTmp->snmpNotifyTag == NULL) {
         config_perror("invalid specification for snmpNotifyTag");
+        SNMP_FREE(StorageTmp);
         return;
     }
 
@@ -389,12 +568,14 @@ parse_snmpNotifyTable(const char *token, char *line)
     line =
         read_config_read_data(ASN_INTEGER, line,
                               &StorageTmp->snmpNotifyStorageType, &tmpint);
+    if (!StorageTmp->snmpNotifyStorageType)
+        StorageTmp->snmpNotifyStorageType = ST_READONLY;
 
     line =
         read_config_read_data(ASN_INTEGER, line,
                               &StorageTmp->snmpNotifyRowStatus, &tmpint);
-
-
+    if (!StorageTmp->snmpNotifyRowStatus)
+        StorageTmp->snmpNotifyRowStatus = RS_ACTIVE;
 
 
     snmpNotifyTable_add(StorageTmp);
@@ -428,7 +609,12 @@ store_snmpNotifyTable(int majorID, int minorID, void *serverarg,
          hcindex = hcindex->next) {
         StorageTmp = (struct snmpNotifyTable_data *) hcindex->data;
 
-        if (StorageTmp->snmpNotifyStorageType == ST_NONVOLATILE) {
+        /*
+         * store permanent and nonvolatile rows.
+         * XXX should there be a qualification on RowStatus??
+         */
+        if ((StorageTmp->snmpNotifyStorageType == ST_NONVOLATILE) ||
+            (StorageTmp->snmpNotifyStorageType == ST_PERMANENT) ){
 
             memset(line, 0, sizeof(line));
             strcat(line, "snmpNotifyTable ");
@@ -595,10 +781,10 @@ write_snmpNotifyTag(int action,
         if (var_val_type != ASN_OCTET_STR) {
             return SNMP_ERR_WRONGTYPE;
         }
-        if (var_val_len < 0 || var_val_len > 255) {
+        if (var_val_len > 255) {
             return SNMP_ERR_WRONGLENGTH;
         }
-        if (!snmpTagValid(var_val, var_val_len)) {
+        if (!snmpTagValid((char *) var_val, var_val_len)) {
             return SNMP_ERR_WRONGVALUE;
         }
         break;
@@ -608,6 +794,11 @@ write_snmpNotifyTag(int action,
         /*
          * memory reseveration, final preparation... 
          */
+        tmpvar = StorageTmp->snmpNotifyTag;
+        tmplen = StorageTmp->snmpNotifyTagLen;
+        StorageTmp->snmpNotifyTag = (char*)calloc(1, var_val_len + 1);
+        if (NULL == StorageTmp->snmpNotifyTag)
+            return SNMP_ERR_RESOURCEUNAVAILABLE;
         break;
 
 
@@ -619,10 +810,7 @@ write_snmpNotifyTag(int action,
 
 
     case ACTION:
-        tmpvar = StorageTmp->snmpNotifyTag;
-        tmplen = StorageTmp->snmpNotifyTagLen;
-        memdup((u_char **) & StorageTmp->snmpNotifyTag, var_val,
-               var_val_len);
+        memcpy(StorageTmp->snmpNotifyTag, var_val, var_val_len);
         StorageTmp->snmpNotifyTagLen = var_val_len;
         break;
 
@@ -644,6 +832,7 @@ write_snmpNotifyTag(int action,
          * permanently.  Make sure that anything done here can't fail! 
          */
         SNMP_FREE(tmpvar);
+        snmp_store_needed(NULL);
         break;
     }
 
@@ -864,11 +1053,11 @@ write_snmpNotifyRowStatus(int action,
             if (StorageNew == NULL) {
                 return SNMP_ERR_RESOURCEUNAVAILABLE;
             }
-            memdup((u_char **) & (StorageNew->snmpNotifyName),
-                   vp->val.string, vp->val_len);
+            StorageNew->snmpNotifyName = (char*)calloc( 1, vp->val_len + 1 );
             if (StorageNew->snmpNotifyName == NULL) {
                 return SNMP_ERR_RESOURCEUNAVAILABLE;
             }
+            memcpy(StorageNew->snmpNotifyName, vp->val.string, vp->val_len);
             StorageNew->snmpNotifyNameLen = vp->val_len;
             vp = vp->next_variable;
 
@@ -913,6 +1102,9 @@ write_snmpNotifyRowStatus(int action,
             /*
              * set the flag? 
              */
+            if (StorageTmp == NULL)
+                return SNMP_ERR_GENERR; /* should never ever get here */
+            
             old_value = StorageTmp->snmpNotifyRowStatus;
             StorageTmp->snmpNotifyRowStatus = *((long *) var_val);
         } else {
@@ -955,7 +1147,8 @@ write_snmpNotifyRowStatus(int action,
              */
             snmpNotifyTable_add(StorageDel);
         } else if (set_value != RS_DESTROY) {
-            StorageTmp->snmpNotifyRowStatus = old_value;
+            if (StorageTmp)
+                StorageTmp->snmpNotifyRowStatus = old_value;
         }
         break;
 
@@ -975,6 +1168,7 @@ write_snmpNotifyRowStatus(int action,
             StorageTmp->snmpNotifyRowStatus = RS_NOTINSERVICE;
             StorageNew = NULL;
         }
+        snmp_store_needed(NULL);
         break;
     }
     return SNMP_ERR_NOERROR;

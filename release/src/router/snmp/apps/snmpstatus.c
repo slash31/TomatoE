@@ -1,5 +1,6 @@
 /*
- * snmpstatus.c - send snmp GET requests to a network entity.
+ * snmpstatus.c - retrieves a fixed set of management information from
+ * a network entity.
  *
  */
 /***********************************************************************
@@ -43,11 +44,7 @@ SOFTWARE.
 #include <stdio.h>
 #include <ctype.h>
 #if TIME_WITH_SYS_TIME
-# ifdef WIN32
-#  include <sys/timeb.h>
-# else
-#  include <sys/time.h>
-# endif
+# include <sys/time.h>
 # include <time.h>
 #else
 # if HAVE_SYS_TIME_H
@@ -58,9 +55,6 @@ SOFTWARE.
 #endif
 #if HAVE_SYS_SELECT_H
 #include <sys/select.h>
-#endif
-#if HAVE_WINSOCK_H
-#include <winsock.h>
 #endif
 #if HAVE_NETDB_H
 #include <netdb.h>
@@ -159,9 +153,11 @@ main(int argc, char *argv[])
      * get the common command line arguments 
      */
     switch (snmp_parse_args(argc, argv, &session, "C:", &optProc)) {
-    case -2:
+    case NETSNMP_PARSE_ARGS_ERROR:
+        exit(1);
+    case NETSNMP_PARSE_ARGS_SUCCESS_EXIT:
         exit(0);
-    case -1:
+    case NETSNMP_PARSE_ARGS_ERROR_USAGE:
         usage();
         exit(1);
     default:
@@ -210,17 +206,20 @@ main(int argc, char *argv[])
                 }
                 if (vars->name_length == length_sysUpTime &&
                     !memcmp(objid_sysUpTime, vars->name,
-                            sizeof(objid_sysUpTime))) {
+                            sizeof(objid_sysUpTime)) &&
+                    vars->val.integer) {
                     uptime = *vars->val.integer;
                 }
                 if (vars->name_length == length_ipInReceives &&
                     !memcmp(objid_ipInReceives, vars->name,
-                            sizeof(objid_ipInReceives))) {
+                            sizeof(objid_ipInReceives)) &&
+                    vars->val.integer) {
                     ipin = *vars->val.integer;
                 }
                 if (vars->name_length == length_ipOutRequests &&
                     !memcmp(objid_ipOutRequests, vars->name,
-                            sizeof(objid_ipOutRequests))) {
+                            sizeof(objid_ipOutRequests)) &&
+                    vars->val.integer) {
                     ipout = *vars->val.integer;
                 }
             }
@@ -262,12 +261,15 @@ main(int argc, char *argv[])
 
     transport = snmp_sess_transport(snmp_sess_pointer(ss));
     if (transport != NULL && transport->f_fmtaddr != NULL) {
-        char           *s = transport->f_fmtaddr(transport,
+        char *addr_string = transport->f_fmtaddr(transport,
                                                  response->transport_data,
                                                  response->
                                                  transport_data_length);
-        printf("[%s]=>[%s] Up: %s\n", s, sysdescr,
-               uptime_string(uptime, buf));
+        if (addr_string != NULL) {
+            printf("[%s]=>[%s] Up: %s\n", addr_string, sysdescr,
+                   uptime_string(uptime, buf));
+            free(addr_string);
+        }
     } else {
         printf("[<UNKNOWN>]=>[%s] Up: %s\n", sysdescr,
                uptime_string(uptime, buf));

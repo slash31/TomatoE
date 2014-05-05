@@ -4,7 +4,11 @@
 
 #include <net-snmp/net-snmp-config.h>
 
+#if HAVE_SYS_PARAM_H
+#include <sys/param.h>
+#else
 #include <sys/types.h>
+#endif
 #if HAVE_STDLIB_H
 #include <stdlib.h>
 #endif
@@ -18,11 +22,7 @@
 #include <errno.h>
 
 #if TIME_WITH_SYS_TIME
-# ifdef WIN32
-#  include <sys/timeb.h>
-# else
-#  include <sys/time.h>
-# endif
+# include <sys/time.h>
 # include <time.h>
 #else
 # if HAVE_SYS_TIME_H
@@ -40,7 +40,7 @@
 #if HAVE_NETINET_IP_H
 #include <netinet/ip.h>
 #endif
-#ifdef INET6
+#ifdef NETSNMP_ENABLE_IPV6
 #if HAVE_NETINET_IP6_H
 #include <netinet/ip6.h>
 #endif
@@ -57,10 +57,11 @@
 #include <sys/param.h>
 #endif
 #endif
-#elif HAVE_WINSOCK_H
-#include <winsock.h>
 #endif
 #if HAVE_SYS_STREAM_H
+#   ifdef sysv5UnixWare7
+#      define _KMEMUSER 1   /* <sys/stream.h> needs this for queue_t */
+#   endif
 #include <sys/stream.h>
 #endif
 #if HAVE_NET_ROUTE_H
@@ -69,8 +70,8 @@
 #if HAVE_NETINET_IP_VAR_H
 #include <netinet/ip_var.h>
 #endif
-#ifdef INET6
-#if HAVE_NETINET6_IP6_VAR_H
+#ifdef NETSNMP_ENABLE_IPV6
+#if HAVE_NETNETSNMP_ENABLE_IPV6_IP6_VAR_H
 #include <netinet6/ip6_var.h>
 #endif
 #endif
@@ -79,10 +80,6 @@
 #endif
 #if HAVE_INET_MIB2_H
 #include <inet/mib2.h>
-#endif
-
-#if HAVE_DMALLOC_H
-#include <dmalloc.h>
 #endif
 
 #if HAVE_UNISTD_H
@@ -106,10 +103,8 @@
 #include <net-snmp/agent/table_iterator.h>
 #include <net-snmp/agent/table_data.h>
 #include <net-snmp/agent/table_dataset.h>
+#include "agent_module_includes.h"
 #include "mib_module_includes.h"
-
-char            dontReadConfigFiles;
-char           *optconfigfile;
 
 #ifdef HAVE_UNISTD_H
 void
@@ -137,6 +132,7 @@ snmpd_set_agent_user(const char *token, char *cptr)
     } else {
         config_perror("User not found in passwd database");
     }
+    endpwent();
 #endif
 }
 
@@ -164,6 +160,7 @@ snmpd_set_agent_group(const char *token, char *cptr)
     } else {
         config_perror("Group not found in group database");
     }
+    endpwent();
 #endif
 }
 #endif
@@ -184,9 +181,10 @@ snmpd_set_agent_address(const char *token, char *cptr)
         /*
          * append to the older specification string 
          */
-        sprintf(buf, "%s,%s", ptr, cptr);
+        snprintf(buf, sizeof(buf), "%s,%s", ptr, cptr);
+	buf[sizeof(buf) - 1] = '\0';
     } else {
-        strcpy(buf, cptr);
+        strlcpy(buf, cptr, sizeof(buf));
     }
 
     DEBUGMSGTL(("snmpd_ports", "port spec: %s\n", buf));
@@ -214,24 +212,36 @@ init_agent_read_config(const char *app)
 
     if (netsnmp_ds_get_boolean(NETSNMP_DS_APPLICATION_ID, 
 			       NETSNMP_DS_AGENT_ROLE) == MASTER_AGENT) {
+#ifndef NETSNMP_DISABLE_SNMPV1
         register_app_config_handler("trapsink",
                                     snmpd_parse_config_trapsink,
                                     snmpd_free_trapsinks,
                                     "host [community] [port]");
+#endif
+#ifndef NETSNMP_DISABLE_SNMPV2C
         register_app_config_handler("trap2sink",
-                                    snmpd_parse_config_trap2sink, NULL,
+                                    snmpd_parse_config_trap2sink, 
+                                    snmpd_free_trapsinks,
                                     "host [community] [port]");
         register_app_config_handler("informsink",
-                                    snmpd_parse_config_informsink, NULL,
+                                    snmpd_parse_config_informsink,
+                                    snmpd_free_trapsinks,
                                     "host [community] [port]");
+#endif
         register_app_config_handler("trapsess",
-                                    snmpd_parse_config_trapsess, NULL,
+                                    snmpd_parse_config_trapsess,
+                                    snmpd_free_trapsinks,
                                     "[snmpcmdargs] host");
     }
+#if !defined(NETSNMP_DISABLE_SNMPV1) || !defined(NETSNMP_DISABLE_SNMPV2C)
     register_app_config_handler("trapcommunity",
                                 snmpd_parse_config_trapcommunity,
                                 snmpd_free_trapcommunity,
                                 "community-string");
+#endif /* support for community based SNMP */
+    netsnmp_ds_register_config(ASN_OCTET_STR, app, "v1trapaddress", 
+                               NETSNMP_DS_APPLICATION_ID, 
+                               NETSNMP_DS_AGENT_TRAP_ADDR);
 #ifdef HAVE_UNISTD_H
     register_app_config_handler("agentuser",
                                 snmpd_set_agent_user, NULL, "userid");
@@ -241,19 +251,24 @@ init_agent_read_config(const char *app)
     register_app_config_handler("agentaddress",
                                 snmpd_set_agent_address, NULL,
                                 "SNMP bind address");
-    register_app_config_handler("table",
-                                netsnmp_config_parse_table_set, NULL,
-                                "tableoid");
-    register_app_config_handler("add_row", netsnmp_config_parse_add_row,
-                                NULL, "indexes... values...");
     netsnmp_ds_register_config(ASN_BOOLEAN, app, "quit", 
 			       NETSNMP_DS_APPLICATION_ID,
 			       NETSNMP_DS_AGENT_QUIT_IMMEDIATELY);
     netsnmp_ds_register_config(ASN_BOOLEAN, app, "leave_pidfile", 
 			       NETSNMP_DS_APPLICATION_ID,
 			       NETSNMP_DS_AGENT_LEAVE_PIDFILE);
+    netsnmp_ds_register_config(ASN_BOOLEAN, app, "dontLogTCPWrappersConnects",
+                               NETSNMP_DS_APPLICATION_ID,
+                               NETSNMP_DS_AGENT_DONT_LOG_TCPWRAPPERS_CONNECTS);
+    netsnmp_ds_register_config(ASN_INTEGER, app, "maxGetbulkRepeats",
+                               NETSNMP_DS_APPLICATION_ID,
+                               NETSNMP_DS_AGENT_MAX_GETBULKREPEATS);
+    netsnmp_ds_register_config(ASN_INTEGER, app, "maxGetbulkResponses",
+                               NETSNMP_DS_APPLICATION_ID,
+                               NETSNMP_DS_AGENT_MAX_GETBULKRESPONSES);
     netsnmp_init_handler_conf();
 
+#include "agent_module_dot_conf.h"
 #include "mib_module_dot_conf.h"
 #ifdef TESTING
     print_config_handlers();
@@ -278,6 +293,17 @@ snmpd_register_config_handler(const char *token,
     DEBUGMSGTL(("snmpd_register_app_config_handler",
                 "registering .conf token for \"%s\"\n", token));
     register_app_config_handler(token, parser, releaser, help);
+}
+
+void
+snmpd_register_const_config_handler(const char *token,
+                                    void (*parser) (const char *, const char *),
+                                    void (*releaser) (void), const char *help)
+{
+    DEBUGMSGTL(("snmpd_register_app_config_handler",
+                "registering .conf token for \"%s\"\n", token));
+    register_app_config_handler(token, (void(*)(const char *, char *))parser,
+                                releaser, help);
 }
 
 void

@@ -2,7 +2,9 @@ use ExtUtils::MakeMaker;
 require 5;
 use Config;
 use Getopt::Long;
+my $lib_version;
 my %MakeParams = ();
+my $opts;
 
 # See lib/ExtUtils/MakeMaker.pm for details of how to influence
 # the contents of the Makefile that is written.
@@ -11,10 +13,11 @@ my %MakeParams = ();
 
 WriteMakefile(%MakeParams);
 
+Check_Version();
+
 GetTestInfo();
 
 sub InitMakeParams {
-    my $opts;
     my %Params = (
 		  NAME         => 'SNMP',
 		  dist         => { SUFFIX => "gz", COMPRESS => "gzip -9f"},
@@ -24,34 +27,47 @@ sub InitMakeParams {
 		  realclean        => { FILES => 'host' },
 		  );
 
+    if ($ENV{'OSTYPE'} eq 'msys') {
+      $Params{'DEFINE'} = "-DMINGW_PERL";
+    }
+                                    
     my ($snmp_lib, $snmp_llib, $sep);
-    if ($Config{'osname'} eq 'MSWin32') {
+    if (($Config{'osname'} eq 'MSWin32' && $ENV{'OSTYPE'} eq '')) {
       $opts = NetSNMPGetOpts();	
-      $snmp_lib = 'libsnmp.lib';
-      $snmp_link_lib = 'libsnmp';
+      $Params{'DEFINE'} = "-DMSVC_PERL -D_CRT_SECURE_NO_WARNINGS -D_CRT_NONSTDC_NO_WARNINGS";
       $sep = '\\';
+      $snmp_lib_file = 'netsnmp.lib';
+      $snmp_link_lib = 'netsnmp';
 
-      $Params{'DEFINE'} = "-DMSVC_PERL";
+      if (lc($opts->{'debug'}) eq "true") {
+        $lib_dir = 'lib\\debug';
+      }
+      else {
+        $lib_dir = 'lib\\release';
+      }
       
-      if ($opts->{'insource'}) {
-	$Params{'LIBS'} = "-L$basedir\\win32\\lib\\ -l$snmp_link_lib";
+      if (lc($opts->{'insource'}) eq "true") {
+	$Params{'LIBS'} = "-L$basedir\\win32\\$lib_dir\\ -l$snmp_link_lib";
       }
       else {
 	my @LibDirs = split (';',$ENV{LIB});
+        my $LibDir;
 	if ($opts->{'prefix'}) {
 	  push (@LibDirs,"$ENV{'NET-SNMP-PATH'}${sep}lib");
 	}
 	$noLibDir = 1;
 	while ($noLibDir) {
-	  $LibDir = find_files(["$snmp_lib"],\@LibDirs);
+	  $LibDir = find_files(["$snmp_lib_file"],\@LibDirs);
 	  if ($LibDir ne '') {
 	    $noLibDir = 0;
+            # Put quotes around LibDir to allow spaces in paths
+            $LibDir = '"' . $LibDir . '"';
 	  }
 	  else
 	  {
 	    @LibDirs = ();
-	    @LibDirs[0] = prompt("The Net-SNMP library ($snmp_lib) could not be found.\nPlease enter the directory where it is located:");
-	    @LibDirs[0] =~ s/\\$//;
+	    $LibDirs[0] = prompt("The Net-SNMP library ($snmp_lib_file) could not be found.\nPlease enter the directory where it is located:");
+	    $LibDirs[0] =~ s/\\$//;
 	  }
 	}
 	$Params{LIBS} = "-L$LibDir -l$snmp_link_lib";
@@ -61,6 +77,7 @@ sub InitMakeParams {
     }
     else {
 	$opts = NetSNMPGetOpts();
+	$Params{'LDDLFLAGS'} = "$Config{lddlflags} " . `$opts->{'nsconfig'} --ldflags`;
 	if (!$ENV{'NETSNMP_LIBS'}) {
 	    $Params{'LIBS'}    = `$opts->{'nsconfig'} --libs`;
 	    chomp($Params{'LIBS'});
@@ -74,13 +91,14 @@ sub InitMakeParams {
 	} else {
 	    $Params{'CCFLAGS'} = $ENV{'NETSNMP_CCFLAGS'};
 	}
-	if ($opts->{'insource'} eq "true") {
+        $lib_version = `$opts->{'nsconfig'} --version`;
+	if (lc($opts->{'insource'}) eq "true") {
 	    $Params{'LIBS'} = "-L../../snmplib/.libs -L../../snmplib/ " . $Params{'LIBS'};
 	    $Params{'CCFLAGS'} = "-I../../include " . $Params{'CCFLAGS'};
 #	} else {
 #	    $Params{'PREREQ_PM'} = { 'NetSNMP::default_store' => 0.01 };
 	}
-	$Params{'CCFLAGS'} =~ s/ -W[-\w]+//g; # ignore developer warnings
+	$Params{'CCFLAGS'} =~ s/ -W(all|inline|strict-prototypes|write-strings|cast-qual|no-char-subscripts)//g; # ignore developer warnings
 	if (!$ENV{'NETSNMP_PREFIX'}) {
 	    $prefix            = `$opts->{'nsconfig'} --prefix`;
 	    chomp($prefix);
@@ -97,63 +115,50 @@ sub InitMakeParams {
 
 }
 
-sub find_files {
-    my($f,$d) = @_;
-    my ($dir,$found,$file);
-    for $dir (@$d){
-	$found = 0;
-	for $file (@$f) {
-	    $found++ if -f "$dir/$file";
-	}
-	if ($found == @$f) {
-	    return $dir;
-	}
-    }
-}
-
 sub GetTestInfo {
     my $sep = ($^O =~ /win32/i ? '\\' : '/');
     my $info_file = "t${sep}snmptest.cmd";
     my $snmpd_path1 = "${prefix}${sep}sbin";
     my $snmpd_path2 = "${sep}usr${sep}sbin";
     my $snmpd_path3 = "${sep}usr${sep}bin";
-    open(H, ">$info_file") || die "Error: could not open file '$info_file'($!)";
-    if($^O =~ /win32/i) {
-#you are using WIN 32
-	my $mibdir = "${prefix}${sep}share${sep}snmp${sep}mibs";
-	print <<WIN32
-==================================================================
-You are using Windows 32. The testing of Perl/SNMP API here would
-require you to start an snmpd agent and a trap receiver using the
-config file provided ( t\\snmptest.conf) manually.The
-test scripts will not do this(as in unix testing). So, please
-run those agents and enter the following information.If the data
-about host, agent_port and trap_port are already present in your
-snmptest.cmd file, make test will use those data for testing.
-=================================================================
-WIN32
-;
+    my $win32_snmpd_path = $ENV{'NET-SNMP-PATH'} . $sep . "bin";
 
-	$host = prompt("Please enter the host IP address/host name: ", "localhost");
-	print H "HOST => $host\n";
-	$agent_port = prompt("Please enter the agent port number: ", 161);
-	print H "AGENT_PORT => $agent_port\n";
-	$trap_port = prompt("Please enter the trap port number: ", 162);
-	print H "TRAP_PORT => $trap_port\n";
-	$mibdir = prompt("Please enter the MIB directory: ", "/usr/mibs");
-	print H "MIBDIR => $mibdir\n";
-    } else {
-# you are using UNIX
-	my ($mibdir, $snmpd, $snmptrapd);
-	if ($opts->{'insource'} eq "true") {
-	    $mibdir = "../../mibs";
-	    $snmpd = "../../agent/snmpd";
-	    $snmptrapd = "../../apps/snmptrapd";
-	} else {
-	    $mibdir = "${prefix}${sep}share${sep}snmp${sep}mibs";
-	    $snmpd = find_files(["snmpd"], [$snmpd_path1, $snmpd_path2]);
-	    $snmptrapd = find_files(["snmptrapd"], [$snmpd_path1, $snmpd_path2]);
-	}
+    open(H, ">$info_file") || die "Error: could not open file '$info_file'($!)";
+
+    my ($mibdir, $snmpd, $snmptrapd);
+
+        # Windows
+        if ($Config{'osname'} eq 'MSWin32' && $ENV{'OSTYPE'} eq '') {
+          if (lc ($opts->{'insource'}) eq "true") {
+            $mibdir = "../../mibs";
+            if (lc($opts->{'debug'}) eq "true") {
+              $snmpd = "../../win32/bin/debug";
+              $snmptrapd = "../../win32/bin/debug";
+            }
+            else {
+              $snmpd = "../../win32/bin/release";
+              $snmptrapd = "../../win32/bin/release";
+            }
+          } else {
+            $mibdir = $ENV{'NET-SNMP-PATH'} . "${sep}share${sep}snmp${sep}mibs";
+            $snmpd = find_files(["snmpd.exe"], [$win32_snmpd_path]);
+            $snmptrapd = find_files(["snmptrapd.exe"], [$win32_snmpd_path]);
+          }
+        }
+
+        # Unix
+        else {
+          if (lc($opts->{'insource'}) eq "true") {
+            $mibdir = "../../mibs";
+            $snmpd = "../../agent/snmpd";
+            $snmptrapd = "../../apps/snmptrapd";
+          } else {
+            $mibdir = "${prefix}${sep}share${sep}snmp${sep}mibs";
+            $snmpd = find_files(["snmpd"], [$snmpd_path1, $snmpd_path2]);
+            $snmptrapd = find_files(["snmptrapd"], [$snmpd_path1, $snmpd_path2]);
+          }
+        }
+
 	$mibdir = find_files(["NET-SNMP-MIB.txt"],[$mibdir]);
 
 	$mibdir ||= prompt("Unable to locate the MIBs, Please enter the path: ",
@@ -164,14 +169,27 @@ WIN32
 	    prompt("Unable to locate \"snmptrapd\". Please enter the path: ",
 		   $snmpd_path1);
 
-        $snmpd =~ s/($sep)?(snmpd)?$/${sep}snmpd/;
-        $snmptrapd =~ s/($sep)?(snmptrapd)?$/${sep}snmptrapd/;
+        if ($Config{'osname'} eq 'MSWin32' && $ENV{'OSTYPE'} eq '') {
+          $snmpd = $snmpd . $sep . "snmpd.exe";
+          $snmptrapd = $snmptrapd . $sep . "snmptrapd.exe";
+        }
+        else {
+          if ($ENV{'OSTYPE'} eq 'msys') {
+            $snmpd =~ s/snmpd$/snmpd.exe/;
+            $snmptrapd =~ s/snmptrapd$/snmptrapd.exe/;
+          }
+          else
+          {
+            $snmpd =~ s/($sep)?(snmpd)?$/${sep}snmpd/;
+            $snmptrapd =~ s/($sep)?(snmptrapd)?$/${sep}snmptrapd/;
+          }
+        }
 
 	print H "SNMPD => $snmpd\n";
 	print H "SNMPTRAPD => $snmptrapd\n";
 	print H "MIBDIR => $mibdir\n";
 
-	if (!$opts->{'insource'}) {
+	if (!(lc($opts->{'insource'}) eq "true")) {
 	    if (-e $snmpd and -r $snmpd) {
 		if (not -x $snmpd) {
 		    warn("Error: $snmpd not executable. 'make test' will not work.\n");
@@ -188,7 +206,6 @@ WIN32
 		warn("Error: $snmptrapd does not exist or is unreadable. 'make test' will not work.\n");
 	    }
 	}
-    }
 # end of else
     close H;
 }
@@ -201,7 +218,7 @@ sub HasSSL {
 	return undef;
     }
     while (<C>) {
-	$has_ssl++, last if /^\s*#define\s+USE_OPENSSL/;
+	$has_ssl++, last if /^\s*#define\s+NETSNMP_USE_OPENSSL/;
     }
     close C;
     return $has_ssl;
@@ -214,31 +231,42 @@ sub NetSNMPGetOpts {
     $rootpath = "../" if (!$rootpath);
     $rootpath .= '/' if ($rootpath !~ /\/$/);
     
-    if ($Config{'osname'} eq 'MSWin32') {
+    if (($Config{'osname'} eq 'MSWin32' && $ENV{'OSTYPE'} eq '')) {
+
+      # Grab command line options first.  Only used if environment variables are not set
+      GetOptions("NET-SNMP-IN-SOURCE=s" => \$ret{'insource'},
+        "NET-SNMP-PATH=s"      => \$ret{'prefix'},          
+        "NET-SNMP-DEBUG=s"     => \$ret{'debug'});
+
       if ($ENV{'NET-SNMP-IN-SOURCE'})
       {
 	$ret{'insource'} = $ENV{'NET-SNMP-IN-SOURCE'};
+        undef ($ret{'prefix'});
       }
       elsif ($ENV{'NET-SNMP-PATH'})
       {
 	$ret{'prefix'} = $ENV{'NET-SNMP-PATH'};
       }
-      else
-      {
-	# don't have env vars, pull from command line and put there
-	GetOptions("NET-SNMP-IN-SOURCE=s" => \$ret{'insource'},
-	           "NET-SNMP-PATH=s"      => \$ret{'prefix'});
 
-	$ENV{'NET-SNMP-IN-SOURCE'}    = $ret{'insource'};
-	$ENV{'NET-SNMP-PATH'}         = $ret{'prefix'};
+      if ($ENV{'NET-SNMP-DEBUG'})
+      {
+	$ret{'debug'} = $ENV{'NET-SNMP-DEBUG'};
       }
 
+      # Update environment variables in case they are needed
+      $ENV{'NET-SNMP-IN-SOURCE'}    = $ret{'insource'};
+      $ENV{'NET-SNMP-PATH'}         = $ret{'prefix'};
+      $ENV{'NET-SNMP-DEBUG'}        = $ret{'debug'};        
+     
       $basedir = `%COMSPEC% /c cd`;
       chomp $basedir;
       $basedir =~ /(.*?)\\perl.*/;
       $basedir = $1;
       print "Net-SNMP base directory: $basedir\n";
-
+      if ($basedir =~ / /) {
+        die "\nA space has been detected in the base directory.  This is not " .
+            "supported\nPlease rename the folder and try again.\n\n";
+      }
     }
     else
     {
@@ -252,7 +280,7 @@ sub NetSNMPGetOpts {
 	GetOptions("NET-SNMP-CONFIG=s" => \$ret{'nsconfig'},
 	           "NET-SNMP-IN-SOURCE=s" => \$ret{'insource'});
 
-	if ($ret{'insource'} eq "true" && $ret{'nsconfig'} eq "") {
+	if (lc($ret{'insource'}) eq "true" && $ret{'nsconfig'} eq "") {
 	    $ret{'nsconfig'}="sh ROOTPATH../net-snmp-config";
 	} elsif ($ret{'nsconfig'} eq "") {
 	    $ret{'nsconfig'}="net-snmp-config";
@@ -270,3 +298,66 @@ sub NetSNMPGetOpts {
     \%ret;
 }
 
+sub find_files {
+    my($f,$d) = @_;
+    my ($dir,$found,$file);
+    for $dir (@$d){
+	$found = 0;
+	for $file (@$f) {
+	    $found++ if -f "$dir/$file";
+	}
+	if ($found == @$f) {
+	    return $dir;
+	}
+    }
+}
+
+
+sub Check_Version {
+  if (($Config{'osname'} ne 'MSWin32' || $ENV{'OSTYPE'} ne '')) {
+    my $foundversion = 0;
+    return if ($ENV{'NETSNMP_DONT_CHECK_VERSION'});
+    open(I,"<Makefile");
+    while (<I>) {
+	if (/^VERSION = (.*)/) {
+	    my $perlver = $1;
+	    my $srcver = $lib_version;
+	    chomp($srcver);
+	    my $srcfloat = floatize_version($srcver);
+	    $perlver =~ s/pre/0./;
+	    # we allow for perl/CPAN-only revisions beyond the default
+	    # version formatting of net-snmp itself.
+	    $perlver =~ s/(\.\d{5}).*/\1/;
+	    $perlver =~ s/0*$//;
+	    if ($srcfloat ne $perlver) {
+		if (!$foundversion) {
+		    print STDERR "ERROR:
+Net-SNMP installed version: $srcver => $srcfloat
+Perl Module Version:        $perlver
+
+These versions must match for perfect support of the module.  It is possible
+that different versions may work together, but it is strongly recommended
+that you make these two versions identical.  You can get the Net-SNMP
+source code and the associated perl modules directly from 
+
+   http://www.net-snmp.org/
+
+If you want to continue anyway please set the NETSNMP_DONT_CHECK_VERSION
+environmental variable to 1 and re-run the Makefile.PL script.\n";
+		    exit(1);
+		}
+	    }
+	    $foundversion = 1;
+	    last;
+	}
+    }
+    close(I);
+    die "ERROR: Couldn't find version number of this module\n" 
+      if (!$foundversion);
+  }
+}
+
+sub floatize_version {
+    my ($major, $minor, $patch, $opps) = ($_[0] =~ /^(\d+)\.(\d+)\.?(\d*)\.?(\d*)/);
+    return $major + $minor/100 + $patch/10000 + $opps/100000;
+}

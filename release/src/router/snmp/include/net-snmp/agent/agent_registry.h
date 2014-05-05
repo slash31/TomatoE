@@ -8,6 +8,7 @@
 /***********************************************************************/
 
 #include <net-snmp/agent/snmp_agent.h>
+#include <net-snmp/library/fd_event_manager.h>
 
 #ifdef __cplusplus
 extern          "C" {
@@ -34,17 +35,20 @@ struct view_parameters {
 };
 
 struct register_parameters {
-    oid            *name;
-    size_t          namelen;
-    int             priority;
-    int             range_subid;
-    oid             range_ubound;
-    int             timeout;
-    u_char          flags;
+    oid                          *name;
+    size_t                        namelen;
+    int                           priority;
+    int                           range_subid;
+    oid                           range_ubound;
+    int                           timeout;
+    u_char                        flags;
+    const char                   *contextName;
+    netsnmp_session              *session;
+    netsnmp_handler_registration *reginfo;
 };
 
 typedef struct subtree_context_cache_s {
-    char				*context_name;
+    const char				*context_name;
     struct netsnmp_subtree_s		*first_subtree;
     struct subtree_context_cache_s	*next;
 } subtree_context_cache;
@@ -52,6 +56,8 @@ typedef struct subtree_context_cache_s {
 
 
 void             setup_tree		  (void);
+void             shutdown_tree    (void);
+
 
 netsnmp_subtree *netsnmp_subtree_find	  (oid *, size_t, netsnmp_subtree *,
 					   const char *context_name);
@@ -107,6 +113,7 @@ int             unregister_mib_priority	   (oid *, size_t, int);
 int             unregister_mib_range	   (oid *, size_t, int, int, oid);
 int             unregister_mib_context	   (oid *, size_t, int, int, oid,
 					    const char *);
+void            clear_context              (void);
 void            unregister_mibs_by_session (netsnmp_session *);
 int     netsnmp_unregister_mib_table_row   (oid *mibloc, size_t mibloclen,
 					    int priority, int var_subid,
@@ -139,34 +146,6 @@ void            register_mib_detach	   (void);
 	DEBUGMSGTL(("register_mib", "%s registration failed\n", descr));
 
 
-
-#define NUM_EXTERNAL_FDS 32
-#define FD_REGISTERED_OK		 0
-#define FD_REGISTRATION_FAILED		-2
-#define FD_UNREGISTERED_OK		 0
-#define FD_NO_SUCH_REGISTRATION		-1
-
-extern int      external_readfd[NUM_EXTERNAL_FDS],   external_readfdlen;
-extern int      external_writefd[NUM_EXTERNAL_FDS],  external_writefdlen;
-extern int      external_exceptfd[NUM_EXTERNAL_FDS], external_exceptfdlen;
-
-extern void     (*external_readfdfunc[NUM_EXTERNAL_FDS])   (int, void *);
-extern void     (*external_writefdfunc[NUM_EXTERNAL_FDS])  (int, void *);
-extern void     (*external_exceptfdfunc[NUM_EXTERNAL_FDS]) (int, void *);
-
-extern void    *external_readfd_data[NUM_EXTERNAL_FDS];
-extern void    *external_writefd_data[NUM_EXTERNAL_FDS];
-extern void    *external_exceptfd_data[NUM_EXTERNAL_FDS];
-
-int             register_readfd(int, void (*func)(int, void *),   void *);
-int             register_writefd(int, void (*func)(int, void *),  void *);
-int             register_exceptfd(int, void (*func)(int, void *), void *);
-int             unregister_readfd(int);
-int             unregister_writefd(int);
-int             unregister_exceptfd(int);
-
-
-
 #define NUM_EXTERNAL_SIGS 32
 #define SIG_REGISTERED_OK		 0
 #define SIG_REGISTRATION_FAILED		-2
@@ -194,7 +173,7 @@ int             netsnmp_register_mib(const char *, struct variable *,
 				     int);
 
 #ifdef __cplusplus
-};
+}
 #endif
 
 #endif                          /* AGENT_REGISTRY_H */

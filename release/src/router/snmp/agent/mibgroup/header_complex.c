@@ -5,9 +5,6 @@
 #include <net-snmp/net-snmp-config.h>
 
 #include <sys/types.h>
-#if HAVE_WINSOCK_H
-#include <winsock.h>
-#endif
 #if HAVE_STDLIB_H
 #include <stdlib.h>
 #endif
@@ -94,7 +91,7 @@ header_complex_generate_varoid(netsnmp_variable_list * var)
     if (var->name_length > MAX_OID_LEN) {
         DEBUGMSGTL(("header_complex_generate_varoid",
                     "Something terribly wrong, namelen = %d\n",
-                    var->name_length));
+                    (int)var->name_length));
         return SNMPERR_GENERR;
     }
 
@@ -130,7 +127,7 @@ header_complex_parse_oid(oid * oidIndex, size_t oidLen,
             var->val_len = sizeof(long);
             oidLen--;
             DEBUGMSGTL(("header_complex_parse_oid",
-                        "Parsed int(%d): %d\n", var->type,
+                        "Parsed int(%d): %ld\n", var->type,
                         *var->val.integer));
             break;
 
@@ -365,19 +362,30 @@ header_complex_add_data_by_oid(struct header_complex_index **thedata,
                                oid * newoid, size_t newoid_len, void *data)
 {
     struct header_complex_index *hciptrn, *hciptrp, *ourself;
+    int rc;
 
     if (thedata == NULL || newoid == NULL || data == NULL)
         return NULL;
 
     for (hciptrn = *thedata, hciptrp = NULL;
-         hciptrn != NULL; hciptrp = hciptrn, hciptrn = hciptrn->next)
+         hciptrn != NULL; hciptrp = hciptrn, hciptrn = hciptrn->next) {
         /*
          * XXX: check for == and error (overlapping table entries) 
+         * 8/2005 rks Ok, I added duplicate entry check, but only log
+         *            warning and continue, because it seems that nobody
+         *            that calls this fucntion does error checking!.
          */
-        if (snmp_oid_compare
-            (hciptrn->name, hciptrn->namelen, newoid, newoid_len)
-            > 0)
+        rc = snmp_oid_compare(hciptrn->name, hciptrn->namelen,
+                              newoid, newoid_len);
+        if (rc > 0)
             break;
+        else if (0 == rc) {
+            snmp_log(LOG_WARNING, "header_complex_add_data_by_oid with "
+                     "duplicate index.\n");
+            /** uncomment null return when callers do error checking */
+            /** return NULL; */
+        }
+    }
 
     /*
      * nptr should now point to the spot that we need to add ourselves
@@ -389,6 +397,8 @@ header_complex_add_data_by_oid(struct header_complex_index **thedata,
      */
     ourself = (struct header_complex_index *)
         SNMP_MALLOC_STRUCT(header_complex_index);
+    if (ourself == NULL)
+        return NULL;
 
     /*
      * change our pointers 
@@ -432,13 +442,15 @@ header_complex_extract_entry(struct header_complex_index **thetop,
                              struct header_complex_index *thespot)
 {
     struct header_complex_index *hciptrp, *hciptrn;
-    void           *retdata = thespot->data;
+    void           *retdata;
 
     if (thespot == NULL) {
         DEBUGMSGTL(("header_complex_extract_entry",
                     "Null pointer asked to be extracted\n"));
         return NULL;
     }
+
+    retdata = thespot->data;
 
     hciptrp = thespot->prev;
     hciptrn = thespot->next;

@@ -1,3 +1,4 @@
+#include <net-snmp/net-snmp-config.h>
 
 #ifdef CMU_COMPATIBLE
 
@@ -18,45 +19,6 @@ mib_OidToTxt(oid * O, size_t OidLen, char *Buf, size_t BufLen)
     return 1;
 }
 
-
-
-char           *
-snmp_pdu_type(netsnmp_pdu *PDU)
-{
-    switch (PDU->command) {
-    case SNMP_MSG_GET:
-        return ("GET");
-        break;
-    case SNMP_MSG_GETNEXT:
-        return ("GETNEXT");
-        break;
-    case SNMP_MSG_RESPONSE:
-        return ("RESPONSE");
-        break;
-    case SNMP_MSG_SET:
-        return ("SET");
-        break;
-    case SNMP_MSG_GETBULK:
-        return ("GETBULK");
-        break;
-    case SNMP_MSG_INFORM:
-        return ("INFORM");
-        break;
-    case SNMP_MSG_TRAP2:
-        return ("V2TRAP");
-        break;
-    case SNMP_MSG_REPORT:
-        return ("REPORT");
-        break;
-
-    case SNMP_MSG_TRAP:
-        return ("V1TRAP");
-        break;
-    default:
-        return ("Unknown");
-        break;
-    }
-}
 
 /*
  * cmu_snmp_parse - emulate CMU library's snmp_parse.
@@ -126,4 +88,6 @@ cmu_snmp_parse(netsnmp_session * session,
 }
 
 
+#else
+int cmu_unused;	/* Suppress "empty translation unit" warning */
 #endif                          /* CMU_COMPATIBLE */
