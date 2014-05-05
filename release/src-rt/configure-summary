@@ -1,0 +1,13 @@
+  SNMP Versions Supported:    1 2c 3
+  Building for:               linux
+  Net-SNMP Version:           5.6.2
+  Network transport support:  Callback Alias UDP UDPIPv4Base UDPBase IPv4Base SocketBase
+  SNMPv3 Security Modules:     usm
+  Agent MIB code:             mibII host mibII/ip mibII/tcp mibII/udp mibII/icmp mibII/var_route mibII/kernel_linux ucd_snmp agentx notification utilities target default_modules =>  mibII/snmp_mib_5_5 mibII/system_mib mibII/sysORTable mibII/at mibII/ifTable mibII/ip mibII/tcp mibII/icmp mibII/udp mibII/vacm_vars mibII/setSerialNo if-mib ip-mib ip-forward-mib tcp-mib udp-mib host/hr_storage host/hr_filesys host/hrSWInstalledTable host/hrSWRunTable host/hr_system host/hr_device host/hr_other host/hr_proc host/hr_network host/hr_print host/hr_disk host/hr_partition mibII/kernel_linux mibII/ifTable mibII/ipAddr mibII/at mibII/var_route mibII/route_write mibII/ip mibII/ip mibII/kernel_linux mibII/tcpTable mibII/kernel_linux mibII/udpTable mibII/kernel_linux mibII/ip ucd-snmp/disk ucd-snmp/proc ucd-snmp/versioninfo ucd-snmp/pass ucd-snmp/pass_persist ucd-snmp/loadave agent/extend ucd-snmp/errormib ucd-snmp/file ucd-snmp/dlmod ucd-snmp/proxy ucd-snmp/logmatch ucd-snmp/memory ucd-snmp/vmstat agentx/master agentx/subagent notification/snmpNotifyTable snmp-notification-mib/snmpNotifyFilterTable notification/snmpNotifyFilterProfileTable utilities/override utilities/execute utilities/iquery target/target_counters_5_5 target/snmpTargetAddrEntry target/snmpTargetParamsEntry target/target mibII/snmp_mib mibII/system_mib mibII/sysORTable mibII/vacm_vars mibII/vacm_conf util_funcs/Exit util_funcs/restart
+  MYSQL Trap Logging:         unavailable
+  Embedded Perl support:      disabled
+  SNMP Perl modules:          disabled
+  SNMP Python modules:        disabled
+  Crypto support from:        
+  Authentication support:     MD5
+  Encryption support:         

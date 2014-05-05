@@ -67,11 +67,6 @@ ifneq ($(TCONFIG_JFFS2),y)
 	sed -i $(INSTALLDIR)/www/nas-media.asp -e "/JFFS2-BEGIN/,/JFFS2-END/d"
 endif
 
-# Only include the Zebra options if Zebra is configured in.
-ifneq ($(TCONFIG_ZEBRA),y)
-	sed -i $(INSTALLDIR)/www/advanced-routing.asp -e "/ZEBRA-BEGIN/,/ZEBRA-END/d"
-endif
-
 # Only include EMF options if EMF is configured in.
 ifneq ($(TCONFIG_EMF),y)
 	sed -i $(INSTALLDIR)/www/advanced-routing.asp -e "/EMF-BEGIN/,/EMF-END/d"
@@ -187,7 +182,7 @@ endif
 
 	cd $(INSTALLDIR)/www && \
 	for F in $(wildcard *.asp); do \
-		sed -e "s,<div class='version'>Version <% version(); %></div>,<div class='version'>Version <% version(); %> by shibby</div>," $$F > $$F.tmp; \
+		sed -e "s,<div class='version'>Version <% version(); %></div>,<div class='version'>Version <% version(); %> by Slash31</div>," $$F > $$F.tmp; \
 		mv $$F.tmp $$F; \
 	done
 
@@ -199,6 +194,7 @@ ifeq ($(TCONFIG_OPENVPN),y)
 	sed -i $(INSTALLDIR)/www/tomato.js -e "/ VPN-BEGIN/d" -e "/ VPN-END/d"
 	sed -i $(INSTALLDIR)/www/admin-access.asp -e "/ VPN-BEGIN/d" -e "/ VPN-END/d"
 	sed -i $(INSTALLDIR)/www/about.asp -e "/ VPN-BEGIN/d" -e "/ VPN-END/d"
+	echo "configured" > openvpn.txt
 else
 	rm -f $(INSTALLDIR)/www/vpn-server.asp
 	rm -f $(INSTALLDIR)/www/vpn-client.asp
@@ -234,6 +230,34 @@ ifneq ($(TCONFIG_SNMP),y)
 	sed -i $(INSTALLDIR)/www/about.asp -e "/SNMP-BEGIN/,/SNMP-END/d"
 endif
 
+# Only include the netflow pages if NetFlow is compiled in
+ifneq ($(TCONFIG_NETFLOW),y)
+	rm -f $(INSTALLDIR)/www/admin-netflow.asp
+	sed -i $(INSTALLDIR)/www/tomato.js -e "/NETFLOW-BEGIN/,/NETFLOW-END/d"
+	echo "netflow not configured" >> config.txt
+endif
+
+# Only include RIP if conmpiled in
+ifneq ($(TCONFIG_RIP),y)
+	sed -i $(INSTALLDIR)/www/tomato.js -e "/RIP-BEGIN/,/RIP-END/d"
+	sed -i $(INSTALLDIR)/www/advanced-routing.asp -e "/RIP-BEGIN/,/RIP-END/d"
+	echo "RIP not configured" >> config.txt
+endif
+
+# Only include OSPF if conmpiled in
+ifneq ($(TCONFIG_OSPF),y)
+	sed -i $(INSTALLDIR)/www/tomato.js -e "/OSPF-BEGIN/,/OSPF-END/d"
+	sed -i $(INSTALLDIR)/www/advanced-routing.asp -e "/OSPF-BEGIN/,/OSPF-END/d"
+	echo "OSPF not configured" >> config.txt
+endif
+
+# Only include the tcpdump pages if tcpdump is compiled in
+ifneq ($(TCONFIG_TCPDUMP),y)
+	rm -f $(INSTALLDIR)/www/tools-tcpdump.asp
+	sed -i $(INSTALLDIR)/www/tomato.js -e "/TCPDUMP-BEGIN/,/TCPDUMP-END/d"
+	echo "tcpdump" >> config.txt
+endif
+
 # Only include the mmc pages if SDHC is compiled in
 ifneq ($(TCONFIG_SDHC),y)
 	rm -f $(INSTALLDIR)/www/admin-sdhc.asp
@@ -261,7 +285,8 @@ endif
 		-e "/MEDIA-SRV-BEGIN/d"	-e "/MEDIA-SRV-END/d" \
 		-e "/JFFS2-BEGIN/d"	-e "/JFFS2-END/d" \
 		-e "/CIFS-BEGIN/d"	-e "/CIFS-END/d" \
-		-e "/ZEBRA-BEGIN/d"	-e "/ZEBRA-END/d" \
+		-e "/RIP-BEGIN/d"	-e "/RIP-END/d" \
+		-e "/OSPF-BEGIN/d"	-e "/OSPF-END/d" \
 		-e "/EMF-BEGIN/d"	-e "/EMF-END/d" \
 		-e "/OPENVPN-BEGIN/d"	-e "/OPENVPN-END/d" \
 		-e "/AES-BEGIN/d"	-e "/AES-END/d" \

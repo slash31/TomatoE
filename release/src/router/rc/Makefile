@@ -59,6 +59,26 @@ ifeq ($(TCONFIG_SNMP),y)
 OBJS += snmp.o
 endif
 
+ifeq ($(TCONFIG_NETFLOW),y)
+OBJS += netflow.o
+endif
+
+ifeq ($(TCONFIG_TCPDUMP),y)
+OBJS += tcpdump.o
+endif
+
+ifeq ($(TCONFIG_QUAGGA),y)
+OBJS += zebra.o
+endif
+
+ifeq ($(TCONFIG_OSPF),y)
+OBJS += ospf.o
+endif
+
+ifeq ($(TCONFIG_RIP),y)
+OBJS += rip.o
+endif
+
 ifeq ($(TCONFIG_SDHC),y)
 OBJS += mmc.o
 endif
